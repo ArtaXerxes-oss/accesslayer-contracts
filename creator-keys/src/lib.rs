@@ -106,6 +106,8 @@ pub enum ContractError {
     InvalidRecipient = 69,
     /// Emitted when a `batch_sell` call contains fewer than 1 or more than 5 orders.
     BatchSizeExceeded = 70,
+    /// The requested holder snapshot does not exist.
+    SnapshotNotFound = 71,
 }
 
 /// Errors raised by the staking lifecycle entrypoints
@@ -538,6 +540,18 @@ pub mod constants {
 
         pub fn snapshot_balance(creator: &Address, snapshot_id: u32, holder: &Address) -> DataKey {
             DataKey::HolderSnapshotBalance(creator.clone(), snapshot_id, holder.clone())
+        }
+
+        pub fn snapshot_staked_balance(
+            creator: &Address,
+            snapshot_id: u32,
+            holder: &Address,
+        ) -> DataKey {
+            DataKey::HolderSnapshotStakedBalance(creator.clone(), snapshot_id, holder.clone())
+        }
+
+        pub fn snapshot_holders(creator: &Address, snapshot_id: u32) -> DataKey {
+            DataKey::HolderSnapshotHolders(creator.clone(), snapshot_id)
         }
 
         pub fn key_metadata(creator: &Address) -> DataKey {
@@ -1062,6 +1076,10 @@ pub enum DataKey {
     HolderSnapshotMeta(Address, u32),
     /// (creator, snapshot_id, holder) -> balance at snapshot time (issue #778).
     HolderSnapshotBalance(Address, u32, Address),
+    /// (creator, snapshot_id, holder) -> staked balance at snapshot time.
+    HolderSnapshotStakedBalance(Address, u32, Address),
+    /// (creator, snapshot_id) -> holder list captured by the snapshot.
+    HolderSnapshotHolders(Address, u32),
     /// (creator) -> on-chain identity metadata set via `initialise_key` (issue #779).
     KeyMetadata(Address),
     /// (creator, holder) -> ledger of the holder's most recent buy (issue #781).
@@ -4946,10 +4964,19 @@ impl CreatorKeysContract {
         for holder in holders.iter() {
             let balance_key = constants::storage::holder_balance_key(&creator, &holder);
             let balance: u32 = env.storage().persistent().get(&balance_key).unwrap_or(0);
+            let staked_key = constants::storage::staked_balance(&creator, &holder);
+            let staked_balance: u32 = env.storage().persistent().get(&staked_key).unwrap_or(0);
 
             let snap_key = constants::storage::snapshot_balance(&creator, snapshot_id, &holder);
             env.storage().persistent().set(&snap_key, &balance);
             extend_key_ttl_to_full_window(&env, &snap_key);
+
+            let snap_staked_key =
+                constants::storage::snapshot_staked_balance(&creator, snapshot_id, &holder);
+            env.storage()
+                .persistent()
+                .set(&snap_staked_key, &staked_balance);
+            extend_key_ttl_to_full_window(&env, &snap_staked_key);
 
             total_holders = total_holders
                 .checked_add(1)
@@ -4963,6 +4990,10 @@ impl CreatorKeysContract {
         env.storage().persistent().set(&meta_key, &meta);
         extend_key_ttl_to_full_window(&env, &meta_key);
 
+        let holders_key = constants::storage::snapshot_holders(&creator, snapshot_id);
+        env.storage().persistent().set(&holders_key, &holders);
+        extend_key_ttl_to_full_window(&env, &holders_key);
+
         env.events().publish(
             events::snapshot_taken_topics(&creator, snapshot_id),
             events::SnapshotTakenEvent {
@@ -4970,6 +5001,102 @@ impl CreatorKeysContract {
                 snapshot_id,
                 snapshot_ledger,
                 total_holders,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Distributes the treasury balance pro-rata to the staked balances captured
+    /// by a holder snapshot. Payouts are added to each holder's claimable
+    /// dividend balance; floor-division dust remains in the treasury.
+    pub fn distribute_protocol_revenue(
+        env: Env,
+        admin: Address,
+        creator: Address,
+        snapshot_id: u32,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+
+        let meta_key = constants::storage::snapshot_meta(&creator, snapshot_id);
+        let _meta: HolderSnapshotMeta = env
+            .storage()
+            .persistent()
+            .get(&meta_key)
+            .ok_or(ContractError::SnapshotNotFound)?;
+        let holders_key = constants::storage::snapshot_holders(&creator, snapshot_id);
+        let holders: soroban_sdk::Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&holders_key)
+            .ok_or(ContractError::SnapshotNotFound)?;
+        let current_price: i128 = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::KEY_PRICE)
+            .ok_or(ContractError::KeyPriceNotSet)?;
+        let treasury_balance = read_treasury_balance(&env);
+
+        let mut total_weight: i128 = 0;
+        let mut weights = soroban_sdk::Vec::new(&env);
+        let mut staker_count: u32 = 0;
+        for holder in holders.iter() {
+            let staked_key =
+                constants::storage::snapshot_staked_balance(&creator, snapshot_id, &holder);
+            let staked_quantity: u32 = env.storage().persistent().get(&staked_key).unwrap_or(0);
+            let weight = i128::from(staked_quantity)
+                .checked_mul(current_price)
+                .ok_or(ContractError::Overflow)?;
+            if weight > 0 {
+                total_weight = total_weight
+                    .checked_add(weight)
+                    .ok_or(ContractError::Overflow)?;
+                staker_count = staker_count.checked_add(1).ok_or(ContractError::Overflow)?;
+            }
+            weights.push_back((holder, weight));
+        }
+
+        let mut total_distributed: i128 = 0;
+        if total_weight > 0 && treasury_balance > 0 {
+            for (holder, weight) in weights.iter() {
+                if weight == 0 {
+                    continue;
+                }
+                let payout = treasury_balance
+                    .checked_mul(weight)
+                    .ok_or(ContractError::Overflow)?
+                    / total_weight;
+                if payout == 0 {
+                    continue;
+                }
+                let pending_key = constants::storage::holder_dividend_pending(&creator, &holder);
+                let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+                let updated_pending = pending.checked_add(payout).ok_or(ContractError::Overflow)?;
+                env.storage()
+                    .persistent()
+                    .set(&pending_key, &updated_pending);
+                extend_key_ttl_to_full_window(&env, &pending_key);
+                total_distributed = total_distributed
+                    .checked_add(payout)
+                    .ok_or(ContractError::Overflow)?;
+            }
+        }
+
+        let remaining = treasury_balance
+            .checked_sub(total_distributed)
+            .ok_or(ContractError::Overflow)?;
+        env.storage()
+            .persistent()
+            .set(&constants::storage::TREASURY_BALANCE, &remaining);
+        extend_key_ttl_to_full_window(&env, &constants::storage::TREASURY_BALANCE);
+
+        env.events().publish(
+            events::protocol_revenue_distributed_topics(&creator, snapshot_id),
+            events::ProtocolRevenueDistributedEvent {
+                total_distributed,
+                staker_count,
+                snapshot_id,
             },
         );
 
