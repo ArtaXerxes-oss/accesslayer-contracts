@@ -4973,7 +4973,9 @@ impl CreatorKeysContract {
 
             let snap_staked_key =
                 constants::storage::snapshot_staked_balance(&creator, snapshot_id, &holder);
-            env.storage().persistent().set(&snap_staked_key, &staked_balance);
+            env.storage()
+                .persistent()
+                .set(&snap_staked_key, &staked_balance);
             extend_key_ttl_to_full_window(&env, &snap_staked_key);
 
             total_holders = total_holders
@@ -5040,11 +5042,8 @@ impl CreatorKeysContract {
         let mut weights = soroban_sdk::Vec::new(&env);
         let mut staker_count: u32 = 0;
         for holder in holders.iter() {
-            let staked_key = constants::storage::snapshot_staked_balance(
-                &creator,
-                snapshot_id,
-                &holder,
-            );
+            let staked_key =
+                constants::storage::snapshot_staked_balance(&creator, snapshot_id, &holder);
             let staked_quantity: u32 = env.storage().persistent().get(&staked_key).unwrap_or(0);
             let weight = i128::from(staked_quantity)
                 .checked_mul(current_price)
@@ -5073,10 +5072,10 @@ impl CreatorKeysContract {
                 }
                 let pending_key = constants::storage::holder_dividend_pending(&creator, &holder);
                 let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
-                let updated_pending = pending
-                    .checked_add(payout)
-                    .ok_or(ContractError::Overflow)?;
-                env.storage().persistent().set(&pending_key, &updated_pending);
+                let updated_pending = pending.checked_add(payout).ok_or(ContractError::Overflow)?;
+                env.storage()
+                    .persistent()
+                    .set(&pending_key, &updated_pending);
                 extend_key_ttl_to_full_window(&env, &pending_key);
                 total_distributed = total_distributed
                     .checked_add(payout)

@@ -136,8 +136,14 @@ fn test_distribute_protocol_revenue_uses_staked_snapshot_weights_and_retains_dus
 
     let first_share = treasury_before / 3;
     let second_share = (treasury_before * 2) / 3;
-    assert_eq!(client.get_claimable_dividend(&creator, &staker_a), first_share);
-    assert_eq!(client.get_claimable_dividend(&creator, &staker_b), second_share);
+    assert_eq!(
+        client.get_claimable_dividend(&creator, &staker_a),
+        first_share
+    );
+    assert_eq!(
+        client.get_claimable_dividend(&creator, &staker_b),
+        second_share
+    );
     assert_eq!(
         client.get_treasury_balance(),
         treasury_before - first_share - second_share
