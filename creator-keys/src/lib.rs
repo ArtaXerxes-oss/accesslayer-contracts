@@ -5092,7 +5092,7 @@ impl CreatorKeysContract {
         extend_key_ttl_to_full_window(&env, &constants::storage::TREASURY_BALANCE);
 
         env.events().publish(
-            events::protocol_revenue_distributed_topics(snapshot_id),
+            events::protocol_revenue_distributed_topics(&creator, snapshot_id),
             events::ProtocolRevenueDistributedEvent {
                 total_distributed,
                 staker_count,
