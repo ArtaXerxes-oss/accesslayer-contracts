@@ -53,6 +53,8 @@ fn test_standard_registration_initialises_key_config() {
         &12,
         &false,
     );
+    // `env.events()` only holds the last invocation's events.
+    let events = registered_events(&env);
 
     let profile = client.get_creator(&creator);
     assert_eq!(profile.supply, 0);
@@ -62,7 +64,6 @@ fn test_standard_registration_initialises_key_config() {
     assert!(!client.is_auction_pending(&creator));
     assert_eq!(client.get_key_metadata(&creator), Some(metadata(&env)));
 
-    let events = registered_events(&env);
     assert_eq!(events.len(), 1);
     let event = events.get(0).unwrap();
     assert_eq!(event.key_id, creator);
@@ -85,10 +86,11 @@ fn test_auction_mode_registration_sets_auction_pending() {
         &0,
         &true,
     );
+    // `env.events()` only holds the last invocation's events.
+    let events = registered_events(&env);
 
     assert!(client.is_auction_pending(&creator));
     assert_eq!(client.get_creator(&creator).supply, 0);
-    let events = registered_events(&env);
     assert_eq!(events.len(), 1);
     assert!(events.get(0).unwrap().auction_pending);
 }
