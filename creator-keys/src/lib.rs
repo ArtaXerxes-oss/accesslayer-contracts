@@ -112,6 +112,16 @@ pub enum ContractError {
     SnapshotNotFound = 71,
     /// The sender's keys are frozen and cannot be transferred.
     FrozenPosition = 72,
+    /// `execute_action` was called before the timelock delay elapsed.
+    TimelockNotElapsed = 73,
+    /// The timelocked action was already executed or cancelled.
+    ActionNotPending = 74,
+    /// The timelock delay must be between 1 second and 30 days.
+    InvalidTimelockDelay = 75,
+    /// No oracle price has been published yet.
+    OraclePriceNotSet = 76,
+    /// Vault deposit or withdraw input vectors differ in length.
+    InvalidVaultInput = 77,
 }
 
 /// Errors raised by the staking lifecycle entrypoints

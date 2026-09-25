@@ -2208,3 +2208,158 @@ pub struct UpgradeExecutedEvent {
 pub fn upgrade_executed_topics(admin: &Address) -> (Symbol, Address) {
     (UPGRADE_EXECUTED_EVENT_NAME, admin.clone())
 }
+
+/// Event name for a staking vault deposit.
+pub const VAULT_DEPOSIT_EVENT_NAME: Symbol = symbol_short!("vlt_dep");
+
+/// Event name for a staking vault withdrawal.
+pub const VAULT_WITHDRAW_EVENT_NAME: Symbol = symbol_short!("vlt_wdr");
+
+/// Stable vault deposit event payload for downstream indexers.
+///
+/// Event shape:
+/// - topics: `(VAULT_DEPOSIT_EVENT_NAME, creator_id, holder)`
+/// - data: `VaultDepositEvent`
+///
+/// Emitted once per creator key included in a `vault_deposit` call.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct VaultDepositEvent {
+    /// Creator whose keys were deposited.
+    pub creator_id: Address,
+    /// Holder that deposited the keys.
+    pub holder: Address,
+    /// Number of keys deposited.
+    pub amount: u32,
+    /// Holder's vault shares for this creator after the deposit.
+    pub holder_shares: u32,
+    /// Total vault shares for this creator after the deposit.
+    pub total_shares: u32,
+    /// Ledger sequence number at the time of the deposit.
+    pub ledger: u32,
+}
+
+/// Stable vault withdraw event payload for downstream indexers.
+///
+/// Event shape:
+/// - topics: `(VAULT_WITHDRAW_EVENT_NAME, creator_id, holder)`
+/// - data: `VaultWithdrawEvent`
+///
+/// Emitted once per creator key included in a `vault_withdraw` call.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct VaultWithdrawEvent {
+    /// Creator whose keys were withdrawn.
+    pub creator_id: Address,
+    /// Holder that withdrew the keys.
+    pub holder: Address,
+    /// Number of keys returned to the holder.
+    pub amount: u32,
+    /// Holder's vault shares for this creator after the withdrawal.
+    pub holder_shares: u32,
+    /// Total vault shares for this creator after the withdrawal.
+    pub total_shares: u32,
+    /// Ledger sequence number at the time of the withdrawal.
+    pub ledger: u32,
+}
+
+/// Shared vault deposit event topics tuple.
+pub fn vault_deposit_topics(creator: &Address, holder: &Address) -> (Symbol, Address, Address) {
+    (VAULT_DEPOSIT_EVENT_NAME, creator.clone(), holder.clone())
+}
+
+/// Shared vault withdraw event topics tuple.
+pub fn vault_withdraw_topics(creator: &Address, holder: &Address) -> (Symbol, Address, Address) {
+    (VAULT_WITHDRAW_EVENT_NAME, creator.clone(), holder.clone())
+}
+
+/// Event name for an oracle price update.
+pub const ORACLE_PRICE_UPDATED_EVENT_NAME: Symbol = symbol_short!("orc_upd");
+
+/// Stable oracle price update event payload for downstream indexers.
+///
+/// Event shape:
+/// - topics: `(ORACLE_PRICE_UPDATED_EVENT_NAME, oracle)`
+/// - data: `OraclePriceUpdatedEvent`
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct OraclePriceUpdatedEvent {
+    /// Authorised oracle address that published the price.
+    pub oracle: Address,
+    /// Published price.
+    pub price: i128,
+    /// Ledger timestamp (seconds) at which the price was published.
+    pub timestamp: u64,
+}
+
+/// Shared oracle price update event topics tuple.
+pub fn oracle_price_updated_topics(oracle: &Address) -> (Symbol, Address) {
+    (ORACLE_PRICE_UPDATED_EVENT_NAME, oracle.clone())
+}
+
+/// Event name for a timelocked action proposal.
+pub const ACTION_PROPOSED_EVENT_NAME: Symbol = symbol_short!("act_prop");
+
+/// Event name for a timelocked action execution.
+pub const ACTION_EXECUTED_EVENT_NAME: Symbol = symbol_short!("act_exec");
+
+/// Event name for a timelocked action cancellation.
+pub const ACTION_CANCELLED_EVENT_NAME: Symbol = symbol_short!("act_canc");
+
+/// Stable action proposed event payload for downstream indexers.
+///
+/// Event shape:
+/// - topics: `(ACTION_PROPOSED_EVENT_NAME, action_id)`
+/// - data: `ActionProposedEvent`
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ActionProposedEvent {
+    pub action_id: u32,
+    pub proposer: Address,
+    pub change_type: u32,
+    /// Ledger timestamp (seconds) at which the action was proposed.
+    pub proposed_at: u64,
+    /// Earliest ledger timestamp (seconds) at which the action may execute.
+    pub execution_not_before: u64,
+}
+
+/// Stable action executed event payload for downstream indexers.
+///
+/// Event shape:
+/// - topics: `(ACTION_EXECUTED_EVENT_NAME, action_id)`
+/// - data: `ActionExecutedEvent`
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ActionExecutedEvent {
+    pub action_id: u32,
+    /// Ledger timestamp (seconds) at which the action was executed.
+    pub executed_at: u64,
+}
+
+/// Stable action cancelled event payload for downstream indexers.
+///
+/// Event shape:
+/// - topics: `(ACTION_CANCELLED_EVENT_NAME, action_id)`
+/// - data: `ActionCancelledEvent`
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ActionCancelledEvent {
+    pub action_id: u32,
+    /// Ledger timestamp (seconds) at which the action was cancelled.
+    pub cancelled_at: u64,
+}
+
+/// Shared action proposed event topics tuple.
+pub fn action_proposed_topics(action_id: u32) -> (Symbol, u32) {
+    (ACTION_PROPOSED_EVENT_NAME, action_id)
+}
+
+/// Shared action executed event topics tuple.
+pub fn action_executed_topics(action_id: u32) -> (Symbol, u32) {
+    (ACTION_EXECUTED_EVENT_NAME, action_id)
+}
+
+/// Shared action cancelled event topics tuple.
+pub fn action_cancelled_topics(action_id: u32) -> (Symbol, u32) {
+    (ACTION_CANCELLED_EVENT_NAME, action_id)
+}
