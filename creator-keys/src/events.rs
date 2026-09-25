@@ -1993,20 +1993,56 @@ pub fn price_queried_topics(caller: &Address) -> (Symbol, Address) {
     (PRICE_QUERIED_EVENT_NAME, caller.clone())
 }
 
-/// Event name for admin-authorised key registration.
-pub const KEY_REGISTERED_EVENT_NAME: Symbol = symbol_short!("key_reg");
+// --- Pause state change (#889) ---
 
-/// Emitted by `register_key`. Keys are identified by their creator address, so
-/// `key_id` and `creator` carry the same address.
+pub const PAUSE_STATE_CHANGED_EVENT_NAME: Symbol = symbol_short!("pause_chg");
+
+/// Emitted by `pause` and `unpause` with the new state and the calling admin.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
-pub struct KeyRegisteredEvent {
-    pub key_id: Address,
-    pub creator: Address,
-    pub auction_pending: bool,
-    pub registered_at_ledger: u32,
+pub struct PauseStateChangedEvent {
+    pub paused: bool,
+    pub caller: Address,
 }
 
-pub fn key_registered_topics(key_id: &Address) -> (Symbol, Address) {
-    (KEY_REGISTERED_EVENT_NAME, key_id.clone())
+pub fn pause_state_changed_topics() -> (Symbol,) {
+    (PAUSE_STATE_CHANGED_EVENT_NAME,)
+}
+
+// --- Supply milestone crossings (#887) ---
+
+pub const MILESTONE_CROSSED_EVENT_NAME: Symbol = symbol_short!("mile_x");
+pub const MILESTONE_DIRECTION_UP: Symbol = symbol_short!("up");
+pub const MILESTONE_DIRECTION_DOWN: Symbol = symbol_short!("down");
+
+/// Emitted once per configured supply milestone crossed by a trade.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct MilestoneCrossedEvent {
+    pub key_id: Address,
+    /// 1-based position of the crossed milestone in the configured list.
+    pub tier: u32,
+    pub direction: Symbol,
+    /// Supply after the trade.
+    pub supply: u32,
+}
+
+pub fn milestone_crossed_topics(key_id: &Address) -> (Symbol, Address) {
+    (MILESTONE_CROSSED_EVENT_NAME, key_id.clone())
+}
+
+// --- Contract upgrade (#884) ---
+
+pub const UPGRADE_EXECUTED_EVENT_NAME: Symbol = symbol_short!("upgraded");
+
+/// Emitted by `upgrade` with the version before and after the upgrade.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct UpgradeExecutedEvent {
+    pub old_version: u32,
+    pub new_version: u32,
+}
+
+pub fn upgrade_executed_topics(admin: &Address) -> (Symbol, Address) {
+    (UPGRADE_EXECUTED_EVENT_NAME, admin.clone())
 }
