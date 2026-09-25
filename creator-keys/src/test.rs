@@ -20,17 +20,17 @@ fn test_register_creator_with_locked_allocation() {
     };
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &Some(locked),
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &Some(locked),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let stored = client.get_locked_allocation(&creator).unwrap();
     assert_eq!(stored.amount, 100);
@@ -59,17 +59,17 @@ fn test_register_creator_locked_allocation_reverts_past_ledger() {
     };
 
     let result = client.try_register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &Some(locked),
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &Some(locked),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     assert_eq!(result, Err(Ok(ContractError::AllocationLocked)));
 }
 
@@ -91,17 +91,17 @@ fn test_claim_locked_allocation_success() {
     };
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &Some(locked),
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &Some(locked),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     // Advance ledger past unlock
     ledger_info.sequence_number = 250;
@@ -134,17 +134,17 @@ fn test_claim_locked_allocation_reverts_early() {
     };
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &Some(locked),
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &Some(locked),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     // Try to claim before unlock
     let result = client.try_claim_locked_allocation(&creator);
@@ -169,17 +169,17 @@ fn test_claim_locked_allocation_reverts_double_claim() {
     };
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &Some(locked),
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &Some(locked),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     // Advance ledger past unlock
     ledger_info.sequence_number = 250;
@@ -218,17 +218,17 @@ fn test_get_locked_allocation_returns_allocation_when_set() {
     };
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &Some(locked),
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &Some(locked),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let result = client.get_locked_allocation(&creator).unwrap();
     assert_eq!(result.amount, 100);
@@ -251,17 +251,17 @@ fn test_transfer_keys_basic() {
 
     client.set_key_price(&admin, &100i128);
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: String::from_str(&env, "alice"),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: String::from_str(&env, "alice"),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.buy_key(&creator, &sender, &100i128, &None);
     client.buy_key(&creator, &sender, &100i128, &None);
     client.buy_key(&creator, &sender, &100i128, &None);
@@ -286,17 +286,17 @@ fn test_transfer_keys_sender_zeroed_out() {
 
     client.set_key_price(&admin, &100i128);
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: String::from_str(&env, "alice"),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: String::from_str(&env, "alice"),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.buy_key(&creator, &sender, &100i128, &None);
 
     client.transfer_keys(&creator, &sender, &recipient, &1);
@@ -319,17 +319,17 @@ fn test_transfer_keys_new_recipient() {
 
     client.set_key_price(&admin, &100i128);
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: String::from_str(&env, "alice"),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: String::from_str(&env, "alice"),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.buy_key(&creator, &sender, &100i128, &None);
 
     let supply_before = client.get_total_key_supply(&creator);
@@ -352,17 +352,17 @@ fn test_transfer_keys_self_transfer_reverts() {
 
     client.set_key_price(&admin, &100i128);
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: String::from_str(&env, "alice"),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: String::from_str(&env, "alice"),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.buy_key(&creator, &sender, &100i128, &None);
 
     let result = client.try_transfer_keys(&creator, &sender, &sender, &1);
@@ -382,17 +382,17 @@ fn test_transfer_keys_zero_amount_reverts() {
 
     client.set_key_price(&admin, &100i128);
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: String::from_str(&env, "alice"),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: String::from_str(&env, "alice"),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.buy_key(&creator, &sender, &100i128, &None);
 
     let result = client.try_transfer_keys(&creator, &sender, &recipient, &0);
@@ -412,17 +412,17 @@ fn test_transfer_keys_insufficient_balance_reverts() {
 
     client.set_key_price(&admin, &100i128);
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: String::from_str(&env, "alice"),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: String::from_str(&env, "alice"),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.buy_key(&creator, &sender, &100i128, &None);
 
     let result = client.try_transfer_keys(&creator, &sender, &recipient, &2);
@@ -441,17 +441,17 @@ fn test_register_creator_with_max_supply() {
     let handle = String::from_str(&env, "alice");
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &Some(1000),
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &Some(1000),
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let cap = client.get_max_supply(&creator).unwrap();
     assert_eq!(cap, 1000);
@@ -467,17 +467,17 @@ fn test_register_creator_max_supply_zero_reverts() {
     let handle = String::from_str(&env, "alice");
 
     let result = client.try_register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &Some(0),
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &Some(0),
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     assert_eq!(result, Err(Ok(ContractError::NotPositiveAmount)));
 }
 
@@ -493,18 +493,19 @@ fn test_buy_exceeds_max_supply_reverts() {
     let handle = String::from_str(&env, "alice");
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &Some(5),
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &Some(5),
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.set_key_price(&admin, &100);
+    client.set_protocol_admin(&admin, &admin);
     client.set_fee_config(&admin, &9000, &1000);
 
     // Buy 5 keys to reach cap
@@ -529,18 +530,19 @@ fn test_buy_within_max_supply_succeeds() {
     let handle = String::from_str(&env, "alice");
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &Some(10),
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &Some(10),
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.set_key_price(&admin, &100);
+    client.set_protocol_admin(&admin, &admin);
     client.set_fee_config(&admin, &9000, &1000);
 
     // Buy 5 keys (within cap)
@@ -562,17 +564,17 @@ fn test_get_max_supply_returns_none_for_uncapped() {
     let handle = String::from_str(&env, "alice");
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let cap = client.get_max_supply(&creator);
     assert_eq!(cap, None);
@@ -672,17 +674,17 @@ fn test_update_creator_fee_recipient_success() {
     let handle = String::from_str(&env, "alice");
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.update_creator_fee_recipient(&creator, &new_recipient);
 
     let profile = client.get_creator(&creator);
@@ -701,17 +703,17 @@ fn test_update_creator_fee_recipient_unauthorized_reverts() {
     let handle = String::from_str(&env, "alice");
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let result = client.try_update_creator_fee_recipient(&unauthorized, &new_recipient);
     // This should fail because unauthorized is not the current fee recipient
@@ -760,29 +762,38 @@ fn test_sell_key_accepts_exact_min_proceeds_boundary() {
     let handle = String::from_str(&env, "alice");
 
     client.set_key_price(&admin, &100);
+    client.set_protocol_admin(&admin, &admin);
     client.set_fee_config(&admin, &9000, &1000);
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     client.buy_key(&creator, &seller, &100, &None);
     client.buy_key(&creator, &seller, &100, &None);
+    // The flash-loan guard rejects a sell in the same ledger as the last buy.
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + 1);
 
     let quote = client.get_sell_quote(&creator, &seller);
     let exact_result = client.try_sell_key(&creator, &seller, &Some(quote.total_amount));
     assert_eq!(exact_result, Ok(Ok(1)));
 
     let second_quote = client.get_sell_quote(&creator, &seller);
-    let slippage_result = client.try_sell_key(&creator, &seller, &Some(second_quote.total_amount + 1));
+    // The second sell happens in a later ledger, so advance again to stay clear
+    // of the same-ledger flash-loan guard.
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + 1);
+    let slippage_result =
+        client.try_sell_key(&creator, &seller, &Some(second_quote.total_amount + 1));
     assert_eq!(slippage_result, Err(Ok(ContractError::SlippageExceeded)));
 }
 
@@ -799,19 +810,20 @@ fn test_sell_extends_creator_ttl_after_successful_sell() {
     let handle = String::from_str(&env, "alice");
 
     client.set_key_price(&admin, &100);
+    client.set_protocol_admin(&admin, &admin);
     client.set_fee_config(&admin, &9000, &1000);
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.buy_key(&creator, &seller, &100, &None);
 
     let creator_key = constants::storage::creator(&creator);
@@ -849,17 +861,17 @@ fn test_failed_sell_does_not_extend_creator_ttl() {
 
     client.set_key_price(&admin, &100);
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let creator_key = constants::storage::creator(&creator);
     let mut ledger_info = env.ledger().get();
@@ -874,7 +886,10 @@ fn test_failed_sell_does_not_extend_creator_ttl() {
     let has_profile = env.as_contract(&contract_id, || {
         env.storage().persistent().has(&creator_key)
     });
-    assert!(has_profile, "profile should still be present before TTL expiry");
+    assert!(
+        has_profile,
+        "profile should still be present before TTL expiry"
+    );
 }
 
 // --- TTL extension tests (#396) ---
@@ -890,17 +905,17 @@ fn test_register_creator_without_optional_params_succeeds() {
 
     // Registration with None for both optional params should work (backwards compatible)
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let profile = client.get_creator(&creator);
     assert_eq!(profile.supply, 0);
@@ -1022,22 +1037,23 @@ fn test_get_fee_config_persists_across_repeated_reads() {
     let admin = Address::generate(&env);
     let creator_bps = 9500;
     let protocol_bps = 500;
+    client.set_protocol_admin(&admin, &admin);
     client.set_fee_config(&admin, &creator_bps, &protocol_bps);
 
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "alice");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     // Repeatedly read the fee config and verify stability
     for _ in 0..5 {
@@ -1064,17 +1080,17 @@ fn test_register_creator() {
     let handle = String::from_str(&env, "alice");
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let profile = client.get_creator(&creator);
     assert_eq!(profile.handle, handle);
@@ -1095,17 +1111,17 @@ fn test_register_creator_persists_registration_metadata() {
     let handle = String::from_str(&env, "alice");
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let profile = client.get_creator(&creator);
     assert_eq!(profile.creator, creator);
@@ -1126,31 +1142,31 @@ fn test_duplicate_registration_fails() {
     let handle = String::from_str(&env, "alice");
 
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     // Second registration should fail with AlreadyRegistered error
     let result = client.try_register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     assert_eq!(result, Err(Ok(ContractError::AlreadyRegistered)));
     assert_no_events(&env);
 }
@@ -1186,17 +1202,17 @@ fn test_buy_key_success() {
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "alice");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let buyer = Address::generate(&env);
     let supply = client.buy_key(&creator, &buyer, &100, &None);
@@ -1220,17 +1236,17 @@ fn test_get_creator_holder_count_counts_unique_holders() {
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "alice");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let holder_one = Address::generate(&env);
     let holder_two = Address::generate(&env);
@@ -1272,17 +1288,17 @@ fn test_buy_key_insufficient_payment() {
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "alice");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let buyer = Address::generate(&env);
     let result = client.try_buy_key(&creator, &buyer, &99, &None);
@@ -1354,17 +1370,17 @@ fn test_get_key_balance_returns_zero_for_unregistered_wallet() {
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "alice");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let unregistered_wallet = Address::generate(&env);
 
@@ -1459,22 +1475,23 @@ fn test_get_buy_quote_success() {
 
     let admin = Address::generate(&env);
     client.set_key_price(&admin, &1000);
+    client.set_protocol_admin(&admin, &admin);
     client.set_fee_config(&admin, &9000, &1000); // 90/10 split
 
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "alice");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let quote = client.get_buy_quote(&creator);
     assert_eq!(quote.price, 1000);
@@ -1492,22 +1509,23 @@ fn test_get_sell_quote_success() {
 
     let admin = Address::generate(&env);
     client.set_key_price(&admin, &1000);
+    client.set_protocol_admin(&admin, &admin);
     client.set_fee_config(&admin, &9000, &1000); // 90/10 split
 
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "alice");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let buyer = Address::generate(&env);
     client.buy_key(&creator, &buyer, &1000, &None);
@@ -1528,22 +1546,23 @@ fn test_get_sell_quote_fails_if_insufficient_balance() {
 
     let admin = Address::generate(&env);
     client.set_key_price(&admin, &1000);
+    client.set_protocol_admin(&admin, &admin);
     client.set_fee_config(&admin, &9000, &1000);
 
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "alice");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let holder = Address::generate(&env); // Zero balance
     let result = client.try_get_sell_quote(&creator, &holder);
@@ -1579,17 +1598,17 @@ fn test_get_quote_fails_if_fee_not_set() {
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "alice");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let result = client.try_get_buy_quote(&creator);
     assert_eq!(result, Err(Ok(ContractError::FeeConfigNotSet)));
@@ -1620,17 +1639,17 @@ fn test_get_creator_fee_recipient_success() {
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "alice");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let recipient = client.get_creator_fee_recipient(&creator);
     assert_eq!(recipient, creator);
@@ -1658,22 +1677,23 @@ fn test_quote_overflow_guards() {
     // Set a massive price that will cause overflow when fees are added
     let max_price = i128::MAX - 1;
     client.set_key_price(&admin, &max_price);
+    client.set_protocol_admin(&admin, &admin);
     client.set_fee_config(&admin, &9000, &1000); // 90/10 split
 
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "alice");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     // Buy quote: price + fees (will overflow)
     let result = client.try_get_buy_quote(&creator);
@@ -1751,17 +1771,17 @@ fn test_register_event_field_order_is_stable() {
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "alice");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let all_events = env.events().all();
     assert_eq!(
@@ -1819,22 +1839,23 @@ fn test_buy_event_topic_and_data_order_is_stable() {
 
     let admin = Address::generate(&env);
     client.set_key_price(&admin, &500);
+    client.set_protocol_admin(&admin, &admin);
     client.set_fee_config(&admin, &9000, &1000);
 
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "bob");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let buyer = Address::generate(&env);
     client.buy_key(&creator, &buyer, &500, &None);
@@ -1875,7 +1896,7 @@ fn test_buy_event_topic_and_data_order_is_stable() {
     assert_eq!(topic_creator, creator, "topic[1] creator mismatch");
     assert_eq!(topic_buyer, buyer, "topic[2] buyer mismatch");
 
-    // Data is KeysBoughtEvent { buyer, creator_id, quantity, price_paid, ledger }
+    // Data is KeysBoughtEvent { buyer, creator_id, quantity, price_paid, new_supply, ledger }
     let payload: events::KeysBoughtEvent = data.try_into_val(&env).unwrap();
     assert_eq!(payload.buyer, buyer, "data.buyer mismatch");
     assert_eq!(payload.creator_id, creator, "data.creator_id mismatch");
@@ -1887,7 +1908,8 @@ fn test_buy_event_topic_and_data_order_is_stable() {
     assert_eq!(events::BUY_EVENT_DATA_FIELDS[1], "creator_id");
     assert_eq!(events::BUY_EVENT_DATA_FIELDS[2], "quantity");
     assert_eq!(events::BUY_EVENT_DATA_FIELDS[3], "price_paid");
-    assert_eq!(events::BUY_EVENT_DATA_FIELDS[4], "ledger");
+    assert_eq!(events::BUY_EVENT_DATA_FIELDS[4], "new_supply");
+    assert_eq!(events::BUY_EVENT_DATA_FIELDS[5], "ledger");
 }
 
 /// Regression: `CreatorRegisteredEvent` initial fee-adjacent fields (`supply`,
@@ -1906,17 +1928,17 @@ fn test_register_event_fee_adjacent_fields_are_zero_and_ordered_after_identity_f
     let creator = Address::generate(&env);
     let handle = String::from_str(&env, "carol");
     client.register_creator(
-    &crate::RegisterCreatorParams {
-        creator: creator.clone(),
-        handle: handle.clone(),
-    },
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None
-);
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let all_events = env.events().all();
     let (_contract_id, _topics, data): (
@@ -1954,7 +1976,14 @@ fn test_register_event_fee_adjacent_fields_are_zero_and_ordered_after_identity_f
     assert_eq!(identity_fields, &["creator", "handle"]);
     assert_eq!(
         numeric_fields,
-        &["supply", "holder_count", "creator_bps", "protocol_bps"]
+        &[
+            "supply",
+            "holder_count",
+            "creator_bps",
+            "protocol_bps",
+            "fee_recipient",
+            "registered_at_ledger"
+        ]
     );
 }
 
@@ -2435,7 +2464,7 @@ fn test_compute_net_buyback_cost_zero_gross_price() {
 // Reward Pool Top-Up tests
 // ---------------------------------------------------------------------------
 
-fn setup_base_env(env: &Env) -> (CreatorKeysContractClient, Address) {
+fn setup_base_env<'a>(env: &'a Env) -> (CreatorKeysContractClient<'a>, Address) {
     env.mock_all_auths();
     let contract_id = env.register(CreatorKeysContract, ());
     let client = CreatorKeysContractClient::new(env, &contract_id);
@@ -2446,7 +2475,7 @@ fn setup_base_env(env: &Env) -> (CreatorKeysContractClient, Address) {
     (client, admin)
 }
 
-fn setup_env_with_creator(env: &Env) -> (CreatorKeysContractClient, Address, Address) {
+fn setup_env_with_creator<'a>(env: &'a Env) -> (CreatorKeysContractClient<'a>, Address, Address) {
     let (client, admin) = setup_base_env(env);
     let creator = Address::generate(env);
     client.set_curve_slope(&admin, &0i128);
@@ -2555,7 +2584,7 @@ fn test_spread_zero_buy_equals_sell_price() {
     let env = Env::default();
     let (client, _admin, creator) = setup_env_with_creator(&env);
     // No spread set — buy and sell price should be equal
-    let (buy_price, sell_price) = client.get_price(&creator);
+    let (buy_price, sell_price) = client.get_bid_ask_price(&creator);
     assert_eq!(buy_price, sell_price);
     assert_eq!(buy_price, 1000i128);
 }
@@ -2566,7 +2595,7 @@ fn test_spread_reduces_sell_price() {
     let (client, admin, creator) = setup_env_with_creator(&env);
     // 10% spread: sell_price = 1000 - 100 = 900
     client.set_spread_bps(&admin, &creator, &1000u32);
-    let (buy_price, sell_price) = client.get_price(&creator);
+    let (buy_price, sell_price) = client.get_bid_ask_price(&creator);
     assert_eq!(buy_price, 1000i128);
     assert_eq!(sell_price, 900i128);
 }
@@ -2577,7 +2606,7 @@ fn test_spread_50_percent_halves_sell_price() {
     let (client, admin, creator) = setup_env_with_creator(&env);
     // 50% spread — maximum allowed
     client.set_spread_bps(&admin, &creator, &5000u32);
-    let (buy_price, sell_price) = client.get_price(&creator);
+    let (buy_price, sell_price) = client.get_bid_ask_price(&creator);
     assert_eq!(buy_price, 1000i128);
     assert_eq!(sell_price, 500i128);
 }
@@ -2630,7 +2659,11 @@ fn test_spread_applied_in_sell_quote() {
 
     let quote = client.get_sell_quote(&creator, &buyer);
     // sell price with 10% spread on a flat curve at any supply = 900
-    assert!(quote.price <= 900i128, "expected price <= 900, got {}", quote.price);
+    assert!(
+        quote.price <= 900i128,
+        "expected price <= 900, got {}",
+        quote.price
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2660,7 +2693,7 @@ fn test_get_supply_fails_for_unregistered_creator() {
 fn test_get_price_returns_buy_and_sell_equal_without_spread() {
     let env = Env::default();
     let (client, _admin, creator) = setup_env_with_creator(&env);
-    let (buy, sell) = client.get_price(&creator);
+    let (buy, sell) = client.get_bid_ask_price(&creator);
     assert_eq!(buy, 1000i128);
     assert_eq!(sell, 1000i128);
 }
@@ -2670,7 +2703,7 @@ fn test_get_price_fails_for_unregistered_creator() {
     let env = Env::default();
     let (client, _admin, _creator) = setup_env_with_creator(&env);
     let unknown = Address::generate(&env);
-    let result = client.try_get_price(&unknown);
+    let result = client.try_get_bid_ask_price(&unknown);
     assert_eq!(result, Err(Ok(ContractError::NotRegistered)));
 }
 
@@ -2704,13 +2737,14 @@ fn test_get_volume_accumulates_after_buy() {
 }
 
 #[test]
-fn test_get_key_stats_aggregates_all_fields() {
+fn test_get_key_market_stats_aggregates_all_fields() {
     let env = Env::default();
     let (client, _admin, creator) = setup_env_with_creator(&env);
     let buyer = Address::generate(&env);
     client.buy_key(&creator, &buyer, &1000i128, &None);
 
-    let stats = client.get_key_stats(&creator);
+    let stats = client.get_key_market_stats(&creator);
+    assert_eq!(stats.creator, creator);
     assert_eq!(stats.supply, 1u32);
     assert_eq!(stats.holder_count, 1u32);
     assert_eq!(stats.buy_price, stats.sell_price); // no spread
@@ -2719,11 +2753,11 @@ fn test_get_key_stats_aggregates_all_fields() {
 }
 
 #[test]
-fn test_get_key_stats_fails_for_unregistered() {
+fn test_get_key_market_stats_fails_for_unregistered() {
     let env = Env::default();
     let (client, _admin, _creator) = setup_env_with_creator(&env);
     let unknown = Address::generate(&env);
-    let result = client.try_get_key_stats(&unknown);
+    let result = client.try_get_key_market_stats(&unknown);
     assert_eq!(result, Err(Ok(ContractError::NotRegistered)));
 }
 
@@ -2757,6 +2791,9 @@ fn test_trade_count_increments_on_sell() {
     let (client, _admin, creator) = setup_env_with_creator(&env);
     let buyer = Address::generate(&env);
     client.buy_key(&creator, &buyer, &1000i128, &None);
+    // The flash-loan guard rejects a sell in the same ledger as the buy.
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + 1);
     client.sell_key(&creator, &buyer, &None);
     assert_eq!(client.get_analytics(&creator).trade_count, 2u64);
 }
@@ -2794,6 +2831,9 @@ fn test_unique_traders_seller_not_double_counted() {
     let buyer = Address::generate(&env);
 
     client.buy_key(&creator, &buyer, &1000i128, &None);
+    // The flash-loan guard rejects a sell in the same ledger as the buy.
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + 1);
     client.sell_key(&creator, &buyer, &None);
     // buyer traded on buy = 1 unique; sell from same wallet should not add again
     assert_eq!(client.get_analytics(&creator).unique_traders, 1u64);
@@ -2823,4 +2863,72 @@ fn test_get_analytics_fails_for_unregistered() {
     let unknown = Address::generate(&env);
     let result = client.try_get_analytics(&unknown);
     assert_eq!(result, Err(Ok(ContractError::NotRegistered)));
+}
+
+#[test]
+fn test_buy_and_sell_events_contain_matching_creator_id() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(CreatorKeysContract, ());
+    let client = CreatorKeysContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let handle = String::from_str(&env, "alice");
+
+    client.set_key_price(&admin, &100);
+    client.set_protocol_admin(&admin, &admin);
+    client.set_fee_config(&admin, &9000, &1000);
+    client.register_creator(
+        &crate::RegisterCreatorParams {
+            creator: creator.clone(),
+            handle: handle.clone(),
+        },
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    // Perform buy and extract the buy event
+    client.buy_key(&creator, &buyer, &100, &None);
+
+    let all_events = env.events().all();
+    assert_eq!(all_events.len(), 1, "expected exactly one buy event");
+
+    let (_contract_id, _topics, data): (
+        Address,
+        soroban_sdk::Vec<soroban_sdk::Val>,
+        soroban_sdk::Val,
+    ) = all_events.get(0).unwrap();
+
+    let buy_event: events::KeysBoughtEvent = data.try_into_val(&env).unwrap();
+    assert_eq!(
+        buy_event.creator_id, creator,
+        "buy event creator_id field must match the creator address"
+    );
+
+    // Perform sell and extract the sell event
+    // The flash-loan guard rejects a sell in the same ledger as the buy.
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + 1);
+    client.sell_key(&creator, &buyer, &None);
+
+    let all_events = env.events().all();
+    assert_eq!(all_events.len(), 1, "expected exactly one sell event");
+
+    let (_contract_id, _topics, data): (
+        Address,
+        soroban_sdk::Vec<soroban_sdk::Val>,
+        soroban_sdk::Val,
+    ) = all_events.get(0).unwrap();
+
+    let sell_event: events::KeysSoldEvent = data.try_into_val(&env).unwrap();
+    assert_eq!(
+        sell_event.creator_id, creator,
+        "sell event creator_id field must match the creator address"
+    );
 }

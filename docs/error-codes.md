@@ -45,6 +45,7 @@ Defined in [`creator-keys/src/lib.rs`](../creator-keys/src/lib.rs#L50-L83) as `p
 | `31` | `WhitelistOnly` | Buyer address is not in creator whitelist during whitelist window | Triggered in [`check_whitelist`](../creator-keys/src/lib.rs#L683) when whitelist is active and buyer is not allowed. |
 | `32` | `WhitelistTooLarge` | Whitelist configuration address count exceeds maximum limit | Triggered in [`validate_whitelist_config`](../creator-keys/src/lib.rs#L637) when address count `> MAX_WHITELIST_SIZE`. |
 | `33` | `AirdropRecipientLimitExceeded` | Airdrop recipient list length exceeds max limit per transaction | Triggered in [`airdrop_keys`](../creator-keys/src/lib.rs#L1730) when `recipients.len() > MAX_AIRDROP_RECIPIENT_LIMIT`. |
+| `40` | `DisplayNameEmpty` | Creator display handle is blank (empty string or ASCII whitespace only) | Triggered in [`validate_creator_handle`](../creator-keys/src/lib.rs) before the length and character checks when the handle contains no non-whitespace bytes. |
 
 ---
 
@@ -63,6 +64,11 @@ Defined in [`creator-keys/src/events.rs`](../creator-keys/src/events.rs#L366-L37
 | `26` | `PollExpired` | Voting attempted on a poll after its expiration timestamp | Triggered in [`vote_poll`](../creator-keys/src/events.rs#L523) when `current_ledger_time > expires_at`. |
 | `27` | `NotAHolder` | Voter does not hold any keys for the poll creator (`balance == 0`) | Triggered in [`vote_poll`](../creator-keys/src/events.rs#L532) when voter key balance is zero. |
 | `28` | `InvalidOption` | Selected option index is out of bounds for the target poll | Triggered in [`vote_poll`](../creator-keys/src/events.rs#L526) when `option_index >= options.len()`. |
+| `29` | `QuorumNotReached` | Proposal close attempted when total voting weight participation is below the creator's configured quorum threshold | Triggered in [`close_poll`](../creator-keys/src/events.rs) when `total_voting_weight * 10_000 < circulating_supply * quorum_bps`. |
+| `30` | `QuorumTooHigh` | Quorum threshold basis points exceeds maximum limit (`> 5000` / 50%) | Triggered in [`set_quorum_bps`](../creator-keys/src/lib.rs) when `quorum_bps > 5000`. |
+| `31` | `QuorumTooLow` | Quorum threshold basis points is below minimum limit (`< 100` / 1%) | Triggered in [`set_quorum_bps`](../creator-keys/src/lib.rs) when `quorum_bps < 100`. |
+| `32` | `Unauthorized` | Caller lacks required creator authorization | Triggered in [`set_quorum_bps`](../creator-keys/src/lib.rs) when caller is not the registered creator. |
+| `33` | `AlreadyClosed` | Poll or proposal has already been closed | Triggered in [`close_poll`](../creator-keys/src/events.rs) or [`cast_vote`](../creator-keys/src/events.rs) when `poll.closed == true`. |
 
 ---
 
@@ -136,6 +142,7 @@ try {
 - `AlreadyRegistered` (Code 1) guards against re-registering an existing creator. Off-chain apps should call `is_registered(creator)` or `get_creator(creator)` prior to registration.
 - `NotRegistered` (Code 2) applies to trades, quotes, and management. Callers must register creators prior to key trading.
 - `HandleTooShort` (12), `HandleTooLong` (13), and `InvalidHandleCharacter` (14) are deterministic handle validation checks. Validate handles client-side (`/^[a-z0-9_]{3,32}$/`) before submission.
+- `DisplayNameEmpty` (40) is checked ahead of (12) and (14): a handle that is empty or entirely ASCII whitespace reports this rather than `HandleTooShort` or `InvalidHandleCharacter`.
 
 ### Fees and Pricing
 - `FeeConfigNotSet` (7) and `KeyPriceNotSet` (5) are initialization gates. Detect these and inform users that pricing/fees are not yet configured.
