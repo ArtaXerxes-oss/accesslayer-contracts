@@ -1927,3 +1927,21 @@ pub struct PriceQueriedEvent {
 pub fn price_queried_topics(caller: &Address) -> (Symbol, Address) {
     (PRICE_QUERIED_EVENT_NAME, caller.clone())
 }
+
+/// Event name for admin-authorised key registration.
+pub const KEY_REGISTERED_EVENT_NAME: Symbol = symbol_short!("key_reg");
+
+/// Emitted by `register_key`. Keys are identified by their creator address, so
+/// `key_id` and `creator` carry the same address.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct KeyRegisteredEvent {
+    pub key_id: Address,
+    pub creator: Address,
+    pub auction_pending: bool,
+    pub registered_at_ledger: u32,
+}
+
+pub fn key_registered_topics(key_id: &Address) -> (Symbol, Address) {
+    (KEY_REGISTERED_EVENT_NAME, key_id.clone())
+}

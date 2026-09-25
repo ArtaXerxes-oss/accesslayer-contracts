@@ -108,6 +108,11 @@ pub enum ContractError {
     BatchSizeExceeded = 70,
     /// The requested holder snapshot does not exist.
     SnapshotNotFound = 71,
+    /// The wallet's position for this key is frozen by its owner; buy, sell and
+    /// transfer are rejected until `unfreeze_position` is called.
+    FrozenPosition = 72,
+    /// The requested buy cooldown exceeds `MAX_BUY_COOLDOWN_LEDGERS` at registration.
+    InvalidCooldown = 73,
 }
 
 /// Errors raised by the staking lifecycle entrypoints
@@ -654,6 +659,19 @@ pub mod constants {
         pub fn price_history(creator: &Address) -> DataKey {
             DataKey::PriceHistory(creator.clone())
         }
+
+        /// Storage key for the owner-set freeze flag on a wallet's key position.
+        pub fn position_frozen(key_id: &Address, wallet: &Address) -> DataKey {
+            DataKey::PositionFrozen(key_id.clone(), wallet.clone())
+        }
+
+        /// Storage key for the `auction_pending` flag set by `register_key`.
+        pub fn auction_pending(creator: &Address) -> DataKey {
+            DataKey::AuctionPending(creator.clone())
+        }
+
+        /// Storage key for the price snapshot retention age, in ledgers.
+        pub const PRICE_RETENTION_LEDGERS: DataKey = DataKey::PriceRetentionLedgers;
     }
     fn creator_key(creator: &Address) -> DataKey {
         DataKey::Creator(creator.clone())
@@ -1176,6 +1194,12 @@ pub enum DataKey {
     EarlyExitPenaltyBps(Address),
     /// Maximum buy quantity per transaction for a creator.
     MaxBuyQuantity(Address),
+    /// Owner-set freeze flag on a `(key_id, wallet)` position.
+    PositionFrozen(Address, Address),
+    /// `true` when a key was registered via `register_key` in auction mode.
+    AuctionPending(Address),
+    /// Age in ledgers after which price snapshots are pruned (`0` = no age limit).
+    PriceRetentionLedgers,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1976,6 +2000,25 @@ fn is_blacklisted(env: &Env, wallet: &Address) -> bool {
 fn assert_not_blacklisted(env: &Env, wallet: &Address) -> Result<(), ContractError> {
     if is_blacklisted(env, wallet) {
         return Err(ContractError::WalletBlacklisted);
+    }
+    Ok(())
+}
+
+/// Returns `true` when the wallet has frozen its own position for this key.
+fn is_position_frozen(env: &Env, key_id: &Address, wallet: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get::<DataKey, bool>(&constants::storage::position_frozen(key_id, wallet))
+        .unwrap_or(false)
+}
+
+fn assert_position_not_frozen(
+    env: &Env,
+    key_id: &Address,
+    wallet: &Address,
+) -> Result<(), ContractError> {
+    if is_position_frozen(env, key_id, wallet) {
+        return Err(ContractError::FrozenPosition);
     }
     Ok(())
 }
@@ -2875,6 +2918,51 @@ fn record_price_observation(env: &Env, creator: &Address, price: i128) {
         .set(&constants::storage::price_history(creator), &history);
 }
 
+/// Drops price observations older than the configured retention age.
+///
+/// A retention of `0` (the default) disables age-based pruning; the
+/// [`MAX_PRICE_OBSERVATIONS`] bound still applies.
+fn prune_price_history(env: &Env, creator: &Address) {
+    let retention: u32 = env
+        .storage()
+        .persistent()
+        .get(&constants::storage::PRICE_RETENTION_LEDGERS)
+        .unwrap_or(0);
+    if retention == 0 {
+        return;
+    }
+    let cutoff = env.ledger().sequence().saturating_sub(retention);
+    let mut history = read_price_history(env, creator);
+    let before = history.len();
+    while history.first().map_or(false, |o| o.ledger < cutoff) {
+        history.remove(0);
+    }
+    if history.len() != before {
+        env.storage()
+            .persistent()
+            .set(&constants::storage::price_history(creator), &history);
+    }
+}
+
+/// Records the post-trade price as a snapshot and prunes aged snapshots.
+///
+/// Called from the buy and sell paths in the same invocation as the trade, so
+/// the snapshot is stored atomically with it.
+fn record_trade_price_snapshot(env: &Env, creator: &Address) {
+    let base_price: Option<i128> = env
+        .storage()
+        .persistent()
+        .get(&constants::storage::KEY_PRICE);
+    if let (Some(base_price), Ok(profile)) =
+        (base_price, read_registered_creator_profile(env, creator))
+    {
+        if let Ok(price) = compute_bonding_curve_price(env, creator, base_price, profile.supply) {
+            record_price_observation(env, creator, price);
+            prune_price_history(env, creator);
+        }
+    }
+}
+
 /// Computes the time-weighted average price for `creator` over
 /// `window_ledgers` ledgers ending at the current ledger.
 ///
@@ -3188,6 +3276,7 @@ impl CreatorKeysContract {
         assert_not_paused(&env)?;
         assert_not_blacklisted(&env, &buyer)?;
         assert_before_global_deadline(&env)?;
+        assert_position_not_frozen(&env, &creator, &buyer)?;
 
         // Reject buys on deprecated keys immediately — before any price or fee math.
         if env
@@ -3543,6 +3632,8 @@ impl CreatorKeysContract {
                 .publish(events::buy_event_topics(&creator, &buyer), buy_event_data);
         }
 
+        record_trade_price_snapshot(&env, &creator);
+
         // Extend TTL for creator storage after successful buy
         extend_creator_ttl(&env, &creator);
 
@@ -3562,6 +3653,7 @@ impl CreatorKeysContract {
         assert_not_paused(&env)?;
         assert_not_blacklisted(&env, &buyer)?;
         assert_before_global_deadline(&env)?;
+        assert_position_not_frozen(&env, &creator, &buyer)?;
 
         // Reject buys on deprecated keys immediately — before any price or fee math.
         if env
@@ -3890,6 +3982,8 @@ impl CreatorKeysContract {
                 .publish(events::buy_event_topics(&creator, &buyer), buy_event_data);
         }
 
+        record_trade_price_snapshot(&env, &creator);
+
         // Extend TTL for creator storage after successful buy
         extend_creator_ttl(&env, &creator);
 
@@ -3933,6 +4027,7 @@ impl CreatorKeysContract {
         assert_global_trading_not_halted(&env)?;
         assert_not_paused(&env)?;
         assert_not_blacklisted(&env, &seller)?;
+        assert_position_not_frozen(&env, &creator, &seller)?;
 
         let mut profile: CreatorProfile = read_registered_creator_profile(&env, &creator)?;
 
@@ -4111,6 +4206,8 @@ impl CreatorKeysContract {
             (events::SELL_EVENT_NAME, creator.clone(), seller),
             sell_event_data,
         );
+
+        record_trade_price_snapshot(&env, &creator);
 
         // Extend TTL for creator storage after successful sell
         extend_creator_ttl(&env, &creator);
@@ -4751,6 +4848,52 @@ impl CreatorKeysContract {
 
     pub fn get_self_frozen_balance(env: Env, key_id: Address, wallet: Address) -> u32 {
         read_self_frozen_balance(&env, &key_id, &wallet)
+    }
+
+    /// Freezes the caller's whole position in `key_id`: `buy_key`, `sell_key`
+    /// and `transfer_keys` (and their batch variants) are rejected with
+    /// [`ContractError::FrozenPosition`] until [`Self::unfreeze_position`].
+    ///
+    /// Only the position owner (`wallet`) may freeze their own position. This
+    /// boolean lock is independent of the quantity-based [`Self::self_freeze`].
+    ///
+    /// # Errors
+    /// - [`ContractError::NotRegistered`] if `key_id` has no creator profile.
+    /// - [`ContractError::InsufficientBalance`] if `wallet` holds no keys.
+    pub fn freeze_position(
+        env: Env,
+        key_id: Address,
+        wallet: Address,
+    ) -> Result<(), ContractError> {
+        wallet.require_auth();
+        assert_not_paused(&env)?;
+        read_registered_creator_profile(&env, &key_id)?;
+        if Self::get_key_balance(env.clone(), key_id.clone(), wallet.clone()) == 0 {
+            return Err(ContractError::InsufficientBalance);
+        }
+        let key = constants::storage::position_frozen(&key_id, &wallet);
+        env.storage().persistent().set(&key, &true);
+        extend_key_ttl_to_full_window(&env, &key);
+        Ok(())
+    }
+
+    /// Clears the freeze flag set by [`Self::freeze_position`]. Only the
+    /// position owner may call this; it is a no-op when not frozen.
+    pub fn unfreeze_position(
+        env: Env,
+        key_id: Address,
+        wallet: Address,
+    ) -> Result<(), ContractError> {
+        wallet.require_auth();
+        env.storage()
+            .persistent()
+            .remove(&constants::storage::position_frozen(&key_id, &wallet));
+        Ok(())
+    }
+
+    /// Read-only view: whether `wallet`'s position in `key_id` is frozen.
+    pub fn get_position_frozen(env: Env, key_id: Address, wallet: Address) -> bool {
+        is_position_frozen(&env, &key_id, &wallet)
     }
 
     pub fn get_key_balance(env: Env, creator: Address, wallet: Address) -> u32 {
@@ -5407,6 +5550,104 @@ impl CreatorKeysContract {
     /// if `initialise_key` has not been called for them.
     pub fn get_key_metadata(env: Env, creator: Address) -> Option<KeyMetadata> {
         read_creator_metadata(&env, &creator)
+    }
+
+    /// Registers a creator key on their behalf with its full initial config:
+    /// zero supply, curve preset, buy cooldown, metadata and an optional
+    /// `auction_pending` flag. Emits [`events::KeyRegisteredEvent`].
+    ///
+    /// The issue text names an authorised factory contract, but this
+    /// repository has none, so the caller is gated on the protocol admin.
+    /// `auction_mode` only records the `auction_pending` flag; the auction
+    /// price and supply are still set by the creator via `configure_auction`.
+    ///
+    /// # Errors
+    /// - [`ContractError::Unauthorized`] if `admin` is not the protocol admin.
+    /// - [`ContractError::AlreadyRegistered`] if `creator` already has a profile.
+    /// - [`ContractError::InvalidCooldown`] if `cooldown_ledgers` exceeds
+    ///   [`MAX_BUY_COOLDOWN_LEDGERS`].
+    /// - Handle and metadata validation errors as in `register_creator` and
+    ///   `initialise_key`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_key(
+        env: Env,
+        admin: Address,
+        creator: Address,
+        handle: String,
+        metadata: KeyMetadata,
+        curve_preset: CurvePreset,
+        cooldown_ledgers: u32,
+        auction_mode: bool,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+        assert_not_paused(&env)?;
+        assert_not_blacklisted(&env, &creator)?;
+        validate_creator_handle(&handle)?;
+        validate_key_metadata(&metadata)?;
+        if cooldown_ledgers > MAX_BUY_COOLDOWN_LEDGERS {
+            return Err(ContractError::InvalidCooldown);
+        }
+
+        let key = constants::storage::creator(&creator);
+        if env.storage().persistent().has(&key) {
+            return Err(ContractError::AlreadyRegistered);
+        }
+
+        let current_ledger = env.ledger().sequence();
+        let profile = CreatorProfile {
+            creator: creator.clone(),
+            handle,
+            supply: 0,
+            holder_count: 0,
+            fee_recipient: creator.clone(),
+            registered_at: current_ledger,
+        };
+        env.storage().persistent().set(&key, &profile);
+        extend_key_ttl_to_full_window(&env, &key);
+
+        let preset_key = constants::storage::curve_preset(&creator);
+        env.storage().persistent().set(&preset_key, &curve_preset);
+        extend_key_ttl_to_full_window(&env, &preset_key);
+
+        let cooldown_key = constants::storage::buy_cooldown(&creator);
+        env.storage()
+            .persistent()
+            .set(&cooldown_key, &cooldown_ledgers);
+        extend_key_ttl_to_full_window(&env, &cooldown_key);
+
+        let auction_key = constants::storage::auction_pending(&creator);
+        env.storage().persistent().set(&auction_key, &auction_mode);
+        extend_key_ttl_to_full_window(&env, &auction_key);
+
+        write_creator_metadata(&env, &creator, &metadata);
+
+        let live_until_key = constants::storage::creator_ttl_live_until(&creator);
+        env.storage()
+            .persistent()
+            .set(&live_until_key, &(current_ledger + CREATOR_TTL_LEDGERS));
+        extend_key_ttl_to_full_window(&env, &live_until_key);
+
+        env.events().publish(
+            events::key_registered_topics(&creator),
+            events::KeyRegisteredEvent {
+                key_id: creator.clone(),
+                creator,
+                auction_pending: auction_mode,
+                registered_at_ledger: current_ledger,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Read-only view: `true` when the key was registered via `register_key`
+    /// with `auction_mode` set.
+    pub fn is_auction_pending(env: Env, creator: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::auction_pending(&creator))
+            .unwrap_or(false)
     }
 
     /// Updates a creator's key metadata. Only fields wrapped in `Some` are
@@ -6585,6 +6826,7 @@ impl CreatorKeysContract {
     ) -> Result<(), ContractError> {
         from.require_auth();
         assert_not_paused(&env)?;
+        assert_position_not_frozen(&env, &creator, &from)?;
 
         if amount == 0 {
             return Err(ContractError::ZeroTransferAmount);
@@ -6708,6 +6950,7 @@ impl CreatorKeysContract {
     ) -> Result<(), ContractError> {
         from.require_auth();
         assert_not_paused(&env)?;
+        assert_position_not_frozen(&env, &creator, &from)?;
 
         if transfers.len() > MAX_BATCH_TRANSFER_SIZE {
             return Err(ContractError::BatchTransferSizeExceeded);
@@ -8526,6 +8769,7 @@ impl CreatorKeysContract {
                 return Err(ContractError::NotPositiveAmount);
             }
 
+            assert_position_not_frozen(&env, &creator, &buyer)?;
             let mut profile: CreatorProfile = read_registered_creator_profile(&env, &creator)?;
             assert_whitelist_allows_buy(&env, &profile, &buyer)?;
 
@@ -8655,6 +8899,7 @@ impl CreatorKeysContract {
             }
             // Verify creator profile exists
             read_registered_creator_profile(&env, &creator)?;
+            assert_position_not_frozen(&env, &creator, &seller)?;
 
             // Sum cumulative requested quantity across the batch for this creator
             let mut total_qty_for_creator: u32 = 0;
@@ -9393,6 +9638,41 @@ impl CreatorKeysContract {
         emit_price_queried(&env, &caller, &creator, twap);
 
         Ok(twap)
+    }
+
+    /// Sets the age, in ledgers, after which price snapshots are pruned on the
+    /// next trade (admin-only). `0` disables age-based pruning.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::Unauthorized`] if `admin` is not the protocol admin.
+    pub fn set_price_retention(
+        env: Env,
+        admin: Address,
+        retention_ledgers: u32,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+        env.storage().persistent().set(
+            &constants::storage::PRICE_RETENTION_LEDGERS,
+            &retention_ledgers,
+        );
+        extend_key_ttl_to_full_window(&env, &constants::storage::PRICE_RETENTION_LEDGERS);
+        Ok(())
+    }
+
+    /// Read-only view: the configured price snapshot retention age in ledgers
+    /// (`0` when age-based pruning is disabled).
+    pub fn get_price_retention(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::PRICE_RETENTION_LEDGERS)
+            .unwrap_or(0)
+    }
+
+    /// Read-only view: number of price snapshots currently stored for `creator`.
+    pub fn get_price_snapshot_count(env: Env, creator: Address) -> u32 {
+        read_price_history(&env, &creator).len()
     }
 
     /// Adds `caller` to the price-oracle approve allowlist (admin-only).
