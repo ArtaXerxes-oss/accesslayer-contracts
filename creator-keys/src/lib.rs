@@ -3030,7 +3030,7 @@ fn prune_price_history(env: &Env, creator: &Address) {
     let cutoff = env.ledger().sequence().saturating_sub(retention);
     let mut history = read_price_history(env, creator);
     let before = history.len();
-    while history.first().map_or(false, |o| o.ledger < cutoff) {
+    while history.first().is_some_and(|o| o.ledger < cutoff) {
         history.remove(0);
     }
     if history.len() != before {
