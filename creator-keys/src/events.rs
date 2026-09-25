@@ -2209,6 +2209,24 @@ pub fn upgrade_executed_topics(admin: &Address) -> (Symbol, Address) {
     (UPGRADE_EXECUTED_EVENT_NAME, admin.clone())
 }
 
+/// Event name for admin-authorised key registration.
+pub const KEY_REGISTERED_EVENT_NAME: Symbol = symbol_short!("key_reg");
+
+/// Emitted by `register_key`. Keys are identified by their creator address, so
+/// `key_id` and `creator` carry the same address.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct KeyRegisteredEvent {
+    pub key_id: Address,
+    pub creator: Address,
+    pub auction_pending: bool,
+    pub registered_at_ledger: u32,
+}
+
+pub fn key_registered_topics(key_id: &Address) -> (Symbol, Address) {
+    (KEY_REGISTERED_EVENT_NAME, key_id.clone())
+}
+
 /// Event name for a staking vault deposit.
 pub const VAULT_DEPOSIT_EVENT_NAME: Symbol = symbol_short!("vlt_dep");
 

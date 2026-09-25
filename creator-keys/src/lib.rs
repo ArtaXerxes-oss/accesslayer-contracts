@@ -112,16 +112,18 @@ pub enum ContractError {
     SnapshotNotFound = 71,
     /// The sender's keys are frozen and cannot be transferred.
     FrozenPosition = 72,
+    /// The requested buy cooldown exceeds `MAX_BUY_COOLDOWN_LEDGERS` at registration.
+    InvalidCooldown = 73,
     /// `execute_action` was called before the timelock delay elapsed.
-    TimelockNotElapsed = 73,
+    TimelockNotElapsed = 74,
     /// The timelocked action was already executed or cancelled.
-    ActionNotPending = 74,
+    ActionNotPending = 75,
     /// The timelock delay must be between 1 second and 30 days.
-    InvalidTimelockDelay = 75,
+    InvalidTimelockDelay = 76,
     /// No oracle price has been published yet.
-    OraclePriceNotSet = 76,
+    OraclePriceNotSet = 77,
     /// Vault deposit or withdraw input vectors differ in length.
-    InvalidVaultInput = 77,
+    InvalidVaultInput = 78,
 }
 
 /// Errors raised by the staking lifecycle entrypoints
@@ -681,6 +683,18 @@ pub mod constants {
             DataKey::PriceHistory(creator.clone())
         }
 
+        /// Storage key for the owner-set freeze flag on a wallet's key position.
+        pub fn position_frozen(key_id: &Address, wallet: &Address) -> DataKey {
+            DataKey::PositionFrozen(key_id.clone(), wallet.clone())
+        }
+
+        /// Storage key for the `auction_pending` flag set by `register_key`.
+        pub fn auction_pending(creator: &Address) -> DataKey {
+            DataKey::AuctionPending(creator.clone())
+        }
+
+        /// Storage key for the price snapshot retention age, in ledgers.
+        pub const PRICE_RETENTION_LEDGERS: DataKey = DataKey::PriceRetentionLedgers;
         pub const ORACLE_ADDRESS: DataKey = DataKey::OracleAddress;
         pub const ORACLE_PRICE: DataKey = DataKey::OraclePrice;
         pub const ORACLE_STALENESS_SECS: DataKey = DataKey::OracleStalenessSecs;
@@ -1242,6 +1256,12 @@ pub enum DataKey {
     Referrer(Address),
     /// Set once a referee's first referred trade has paid its referral reward.
     ReferralSettled(Address),
+    /// Owner-set freeze flag on a `(key_id, wallet)` position.
+    PositionFrozen(Address, Address),
+    /// `true` when a key was registered via `register_key` in auction mode.
+    AuctionPending(Address),
+    /// Age in ledgers after which price snapshots are pruned (`0` = no age limit).
+    PriceRetentionLedgers,
     /// Address authorised to publish oracle prices.
     OracleAddress,
     /// Latest oracle price and the timestamp it was published at.
