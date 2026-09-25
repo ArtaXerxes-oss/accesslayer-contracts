@@ -629,6 +629,16 @@ pub mod constants {
         pub fn holder_cap_bps(creator: &Address) -> DataKey {
             DataKey::HolderCapBps(creator.clone())
         }
+
+        pub const MAX_HOLDING_BOUND: DataKey = DataKey::MaxHoldingBound;
+
+        pub fn referrer_of(referee: &Address) -> DataKey {
+            DataKey::Referrer(referee.clone())
+        }
+
+        pub fn referral_settled(referee: &Address) -> DataKey {
+            DataKey::ReferralSettled(referee.clone())
+        }
         pub fn quorum_bps(creator: &Address) -> DataKey {
             DataKey::QuorumBps(creator.clone())
         }
@@ -1176,6 +1186,12 @@ pub enum DataKey {
     EarlyExitPenaltyBps(Address),
     /// Maximum buy quantity per transaction for a creator.
     MaxBuyQuantity(Address),
+    /// Admin-defined upper bound for a creator's per-wallet holding cap.
+    MaxHoldingBound,
+    /// Registered referrer for a referee wallet.
+    Referrer(Address),
+    /// Set once a referee's first referred trade has paid its referral reward.
+    ReferralSettled(Address),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1999,6 +2015,64 @@ fn assert_before_global_deadline(env: &Env) -> Result<(), ContractError> {
         }
     }
     Ok(())
+}
+
+/// Rejects a transfer that would leave the recipient above the creator's
+/// per-wallet holding cap (the same cap `buy_key` enforces).
+fn assert_within_holding_cap(
+    env: &Env,
+    creator: &Address,
+    new_balance: u32,
+) -> Result<(), ContractError> {
+    if let Some(cap) = env
+        .storage()
+        .persistent()
+        .get::<DataKey, u32>(&constants::storage::max_keys_per_wallet(creator))
+    {
+        if new_balance > cap {
+            return Err(ContractError::WalletCapExceeded);
+        }
+    }
+    Ok(())
+}
+
+/// Resolves the referrer for a buy. An explicit referrer wins; otherwise the
+/// buyer's registered referrer is used once, on their first referred trade.
+/// Returns the referrer and whether it came from the one-time registration.
+fn resolve_registered_referrer(
+    env: &Env,
+    buyer: &Address,
+    explicit: Option<Address>,
+) -> (Option<Address>, bool) {
+    if explicit.is_some() {
+        return (explicit, false);
+    }
+    let settled_key = constants::storage::referral_settled(buyer);
+    if env.storage().persistent().has(&settled_key) {
+        return (None, false);
+    }
+    let registered: Option<Address> = env
+        .storage()
+        .persistent()
+        .get(&constants::storage::referrer_of(buyer));
+    if registered.is_some() {
+        env.storage().persistent().set(&settled_key, &true);
+        extend_key_ttl_to_full_window(env, &settled_key);
+    }
+    let is_registered = registered.is_some();
+    (registered, is_registered)
+}
+
+fn assert_creator_or_admin(
+    env: &Env,
+    caller: &Address,
+    creator: &Address,
+) -> Result<(), ContractError> {
+    read_registered_creator_profile(env, creator)?;
+    if caller == creator {
+        return Ok(());
+    }
+    assert_is_admin(env, caller)
 }
 
 fn assert_is_admin(env: &Env, caller: &Address) -> Result<(), ContractError> {
@@ -3582,6 +3656,8 @@ impl CreatorKeysContract {
             }
         }
 
+        let (referrer, from_registration) = resolve_registered_referrer(&env, &buyer, referrer);
+
         let base_price: i128 = env
             .storage()
             .persistent()
@@ -3815,7 +3891,21 @@ impl CreatorKeysContract {
 
             // Split protocol fee between treasury and referrer only when a referrer is provided
             if let Some(referrer_addr) = referrer {
-                let referral_amount = protocol_fee / 2;
+                // Registered referrals pay the admin-configured share of the
+                // protocol fee (default 50%); explicit referrers keep the flat split.
+                let referral_amount = if from_registration {
+                    let bps: u32 = env
+                        .storage()
+                        .persistent()
+                        .get(&constants::storage::referral_fee_bps())
+                        .unwrap_or(5_000);
+                    protocol_fee
+                        .checked_mul(i128::from(bps))
+                        .ok_or(ContractError::Overflow)?
+                        / i128::from(fee::BPS_MAX)
+                } else {
+                    protocol_fee / 2
+                };
                 let treasury_amount = protocol_fee - referral_amount;
 
                 credit_treasury_balance(&env, treasury_amount)?;
@@ -3831,6 +3921,16 @@ impl CreatorKeysContract {
                     env.storage().persistent().set(&ref_key, &new_earnings);
                     extend_key_ttl_to_full_window(&env, &ref_key);
 
+                    if from_registration {
+                        env.events().publish(
+                            (events::referral_reward_allocated_topics(),),
+                            events::ReferralRewardAllocatedEvent {
+                                referee: buyer.clone(),
+                                referrer: referrer_addr.clone(),
+                                amount: referral_amount,
+                            },
+                        );
+                    }
                     env.events().publish(
                         (events::referral_fee_paid_topics(),),
                         events::ReferralFeePaidEvent {
@@ -6635,6 +6735,7 @@ impl CreatorKeysContract {
         let new_to_balance = to_balance
             .checked_add(amount)
             .ok_or(ContractError::Overflow)?;
+        assert_within_holding_cap(&env, &creator, new_to_balance)?;
         env.storage()
             .persistent()
             .set(&to_balance_key, &new_to_balance);
@@ -6759,6 +6860,7 @@ impl CreatorKeysContract {
 
             // Increment the recipient balance.
             let new_to_balance = to_balance.checked_add(qty).ok_or(ContractError::Overflow)?;
+            assert_within_holding_cap(&env, &creator, new_to_balance)?;
             env.storage()
                 .persistent()
                 .set(&to_balance_key, &new_to_balance);
@@ -8052,6 +8154,184 @@ impl CreatorKeysContract {
         );
 
         Ok(())
+    }
+
+    /// Admin sets the upper bound a creator may choose for their per-wallet
+    /// holding cap via [`Self::set_holding_cap`].
+    pub fn set_holding_cap_bound(
+        env: Env,
+        admin: Address,
+        bound: u32,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+        if bound == 0 {
+            return Err(ContractError::InvalidHolderCap);
+        }
+        let key = constants::storage::MAX_HOLDING_BOUND;
+        env.storage().persistent().set(&key, &bound);
+        extend_key_ttl_to_full_window(&env, &key);
+        Ok(())
+    }
+
+    /// Creator updates the maximum number of keys one wallet may hold.
+    ///
+    /// Reuses the per-wallet cap already enforced by `buy_key`, and now also
+    /// by `transfer_keys` and `batch_transfer_keys`. `new_cap` must be greater
+    /// than zero and, when the admin has set a bound, not exceed it.
+    pub fn set_holding_cap(env: Env, creator: Address, new_cap: u32) -> Result<(), ContractError> {
+        creator.require_auth();
+        read_registered_creator_profile(&env, &creator)?;
+        if new_cap == 0 {
+            return Err(ContractError::InvalidHolderCap);
+        }
+        if let Some(bound) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, u32>(&constants::storage::MAX_HOLDING_BOUND)
+        {
+            if new_cap > bound {
+                return Err(ContractError::InvalidHolderCap);
+            }
+        }
+        let key = constants::storage::max_keys_per_wallet(&creator);
+        let old_cap: Option<u32> = env.storage().persistent().get(&key);
+        env.storage().persistent().set(&key, &new_cap);
+        extend_key_ttl_to_full_window(&env, &key);
+
+        env.events().publish(
+            events::holding_cap_updated_topics(&creator),
+            events::HoldingCapUpdatedEvent {
+                creator,
+                old_cap,
+                new_cap,
+            },
+        );
+        Ok(())
+    }
+
+    /// Read-only view: the per-wallet holding cap, or `None` when uncapped.
+    pub fn get_holding_cap(env: Env, creator: Address) -> Option<u32> {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::max_keys_per_wallet(&creator))
+    }
+
+    /// Creator or admin toggles early-access mode. While on, only whitelisted
+    /// wallets may buy; turning it off opens trading to everyone. Shares the
+    /// flag used by `enable_whitelist` / `disable_whitelist`.
+    pub fn set_early_access_mode(
+        env: Env,
+        caller: Address,
+        creator: Address,
+        enabled: bool,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        assert_creator_or_admin(&env, &caller, &creator)?;
+        let mode_key = constants::storage::whitelist_mode(&creator);
+        env.storage().persistent().set(&mode_key, &enabled);
+        extend_key_ttl_to_full_window(&env, &mode_key);
+        Ok(())
+    }
+
+    /// Creator or admin adds (`allowed = true`) or removes a wallet from the
+    /// early-access whitelist and emits `WhitelistUpdatedEvent`.
+    pub fn update_whitelist(
+        env: Env,
+        caller: Address,
+        creator: Address,
+        wallet: Address,
+        allowed: bool,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        assert_creator_or_admin(&env, &caller, &creator)?;
+        let entry_key = constants::storage::whitelist_entry(&creator, &wallet);
+        env.storage().persistent().set(&entry_key, &allowed);
+        extend_key_ttl_to_full_window(&env, &entry_key);
+
+        env.events().publish(
+            events::whitelist_updated_topics(&creator),
+            events::WhitelistUpdatedEvent {
+                creator,
+                wallet,
+                allowed,
+            },
+        );
+        Ok(())
+    }
+
+    /// Read-only view: whether `wallet` is on `creator`'s early-access whitelist.
+    pub fn get_wallet_whitelist_status(env: Env, creator: Address, wallet: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::whitelist_entry(&creator, &wallet))
+            .unwrap_or(false)
+    }
+
+    /// Admin sets the share of the protocol fee (in bps) paid to a referrer on
+    /// a referee's first registered trade. Defaults to 5000 (50%) when unset.
+    pub fn set_referral_fee_bps(env: Env, admin: Address, bps: u32) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+        if bps > fee::BPS_MAX {
+            return Err(ContractError::InvalidFeeConfig);
+        }
+        let key = constants::storage::referral_fee_bps();
+        env.storage().persistent().set(&key, &bps);
+        extend_key_ttl_to_full_window(&env, &key);
+        Ok(())
+    }
+
+    /// Links `referee` to `referrer`. Allowed once per referee and only before
+    /// the referee's referral reward has been paid. The next buy by the referee
+    /// without an explicit referrer pays the reward; later buys pay nothing.
+    pub fn register_referral(
+        env: Env,
+        referee: Address,
+        referrer: Address,
+    ) -> Result<(), ContractError> {
+        referee.require_auth();
+        if referee == referrer {
+            return Err(ContractError::InvalidReferrer);
+        }
+        let key = constants::storage::referrer_of(&referee);
+        if env.storage().persistent().has(&key) {
+            return Err(ContractError::AlreadyRegistered);
+        }
+        env.storage().persistent().set(&key, &referrer);
+        extend_key_ttl_to_full_window(&env, &key);
+
+        env.events().publish(
+            (events::referral_registered_topics(),),
+            events::ReferralRegisteredEvent { referee, referrer },
+        );
+        Ok(())
+    }
+
+    /// Read-only view: the referrer registered for `referee`, if any.
+    pub fn get_referrer(env: Env, referee: Address) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::referrer_of(&referee))
+    }
+
+    /// Referrer withdraws all accumulated referral rewards. Returns the amount
+    /// claimed and resets the balance to zero.
+    pub fn claim_referral_rewards(env: Env, referrer: Address) -> Result<i128, ContractError> {
+        referrer.require_auth();
+        let key = constants::storage::referral_earnings(&referrer);
+        let amount: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        if amount <= 0 {
+            return Err(ContractError::NotPositiveAmount);
+        }
+        env.storage().persistent().set(&key, &0i128);
+        extend_key_ttl_to_full_window(&env, &key);
+
+        env.events().publish(
+            (events::referral_rewards_claimed_topics(),),
+            events::ReferralRewardsClaimedEvent { referrer, amount },
+        );
+        Ok(amount)
     }
 
     pub fn burn(
