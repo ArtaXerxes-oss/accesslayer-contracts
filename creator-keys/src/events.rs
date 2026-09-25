@@ -909,6 +909,11 @@ pub const WHITELIST_ENABLED_EVENT_NAME: Symbol = symbol_short!("wl_en");
 pub const WHITELIST_DISABLED_EVENT_NAME: Symbol = symbol_short!("wl_dis");
 pub const ADDRESS_WHITELISTED_EVENT_NAME: Symbol = symbol_short!("wl_add");
 pub const ADDRESS_REMOVED_EVENT_NAME: Symbol = symbol_short!("wl_rem");
+pub const HOLDING_CAP_UPDATED_EVENT_NAME: Symbol = symbol_short!("hold_cap");
+pub const WHITELIST_UPDATED_EVENT_NAME: Symbol = symbol_short!("wl_upd");
+pub const REFERRAL_REGISTERED_EVENT_NAME: Symbol = symbol_short!("ref_reg");
+pub const REFERRAL_REWARD_ALLOCATED_EVENT_NAME: Symbol = symbol_short!("ref_rwd");
+pub const REFERRAL_REWARDS_CLAIMED_EVENT_NAME: Symbol = symbol_short!("ref_clm");
 pub const KEYS_BURNED_EVENT_NAME: Symbol = symbol_short!("burned");
 pub const SELF_FREEZE_APPLIED_EVENT_NAME: Symbol = symbol_short!("sf_add");
 pub const SELF_FREEZE_LIFTED_EVENT_NAME: Symbol = symbol_short!("sf_del");
@@ -1007,9 +1012,66 @@ pub fn address_removed_topics(creator: &Address) -> (Symbol, Address) {
     (ADDRESS_REMOVED_EVENT_NAME, creator.clone())
 }
 
-/// Event shape:
-/// - topics: `(KEYS_BURNED_EVENT_NAME, key_id)`
-/// - data: `KeysBurnedEvent`
+/// Emitted when a creator changes their per-wallet holding cap.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct HoldingCapUpdatedEvent {
+    pub creator: Address,
+    pub old_cap: Option<u32>,
+    pub new_cap: u32,
+}
+
+pub fn holding_cap_updated_topics(creator: &Address) -> (Symbol, Address) {
+    (HOLDING_CAP_UPDATED_EVENT_NAME, creator.clone())
+}
+
+/// Emitted on every early-access whitelist add (`allowed = true`) and remove.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct WhitelistUpdatedEvent {
+    pub creator: Address,
+    pub wallet: Address,
+    pub allowed: bool,
+}
+
+pub fn whitelist_updated_topics(creator: &Address) -> (Symbol, Address) {
+    (WHITELIST_UPDATED_EVENT_NAME, creator.clone())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ReferralRegisteredEvent {
+    pub referee: Address,
+    pub referrer: Address,
+}
+
+pub fn referral_registered_topics() -> Symbol {
+    REFERRAL_REGISTERED_EVENT_NAME
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ReferralRewardAllocatedEvent {
+    pub referee: Address,
+    pub referrer: Address,
+    pub amount: i128,
+}
+
+pub fn referral_reward_allocated_topics() -> Symbol {
+    REFERRAL_REWARD_ALLOCATED_EVENT_NAME
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ReferralRewardsClaimedEvent {
+    pub referrer: Address,
+    pub amount: i128,
+}
+
+pub fn referral_rewards_claimed_topics() -> Symbol {
+    REFERRAL_REWARDS_CLAIMED_EVENT_NAME
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct KeysBurnedEvent {
