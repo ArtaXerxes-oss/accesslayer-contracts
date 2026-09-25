@@ -1220,6 +1220,28 @@ pub enum StakingKey {
     NextStakeId(Address, Address),
 }
 
+/// Storage keys for the cycle-based protocol revenue distribution (#877).
+///
+/// Kept separate from [`DataKey`] to stay within Soroban's 50-variant cap.
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub enum RevenueKey {
+    /// Admin-configured cycle length in ledgers -> `u32`.
+    CycleLength,
+    /// creator -> undistributed pool balance (`i128`).
+    Pool(Address),
+    /// creator -> number of cycles distributed so far (`u32`).
+    CycleCount(Address),
+    /// creator -> ledger sequence of the last distribution (`u32`).
+    LastDistribution(Address),
+    /// (creator, cycle) -> pool balance snapshotted for that cycle (`i128`).
+    CyclePool(Address, u32),
+    /// (creator, cycle, holder) -> allocated share (`i128`).
+    CycleShare(Address, u32, Address),
+    /// (creator, cycle, holder) -> `true` once the share has been claimed.
+    CycleClaimed(Address, u32, Address),
+}
+
 /// Configuration for a creator's fixed-price pre-launch auction phase.
 #[derive(Clone, Debug, PartialEq)]
 #[contracttype]
@@ -5295,6 +5317,177 @@ impl CreatorKeysContract {
         );
 
         Ok(())
+    }
+
+    /// Adds `amount` of trading fees to `creator`'s revenue distribution pool.
+    pub fn accumulate_fees(
+        env: Env,
+        admin: Address,
+        creator: Address,
+        amount: i128,
+    ) -> Result<i128, ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+        if amount <= 0 {
+            return Err(ContractError::ZeroDistributionAmount);
+        }
+        let key = RevenueKey::Pool(creator);
+        let pool: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        let updated = pool.checked_add(amount).ok_or(ContractError::Overflow)?;
+        env.storage().persistent().set(&key, &updated);
+        extend_key_ttl_to_full_window(&env, &key);
+        Ok(updated)
+    }
+
+    /// Sets the minimum number of ledgers between revenue distribution cycles.
+    pub fn set_distribution_cycle_length(
+        env: Env,
+        admin: Address,
+        length_ledgers: u32,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+        if length_ledgers == 0 {
+            return Err(ContractError::NotPositiveAmount);
+        }
+        let key = RevenueKey::CycleLength;
+        env.storage().persistent().set(&key, &length_ledgers);
+        extend_key_ttl_to_full_window(&env, &key);
+        Ok(())
+    }
+
+    /// Read-only view: undistributed revenue pool balance for `creator`.
+    pub fn get_revenue_pool(env: Env, creator: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&RevenueKey::Pool(creator))
+            .unwrap_or(0)
+    }
+
+    /// Snapshots `creator`'s revenue pool as a new cycle and allocates it to
+    /// `holders` in proportion to their current staked balance. Floor-division
+    /// dust stays in the pool for the next cycle. Returns the new cycle id.
+    pub fn distribute_cycle(
+        env: Env,
+        admin: Address,
+        creator: Address,
+        holders: soroban_sdk::Vec<Address>,
+    ) -> Result<u32, ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+
+        let pool_key = RevenueKey::Pool(creator.clone());
+        let pool: i128 = env.storage().persistent().get(&pool_key).unwrap_or(0);
+        if pool <= 0 {
+            return Err(ContractError::ZeroDistributionAmount);
+        }
+
+        let last_key = RevenueKey::LastDistribution(creator.clone());
+        let length: u32 = env
+            .storage()
+            .persistent()
+            .get(&RevenueKey::CycleLength)
+            .unwrap_or(0);
+        if let Some(last) = env.storage().persistent().get::<_, u32>(&last_key) {
+            let next_allowed = last.checked_add(length).ok_or(ContractError::Overflow)?;
+            if env.ledger().sequence() < next_allowed {
+                return Err(ContractError::CooldownActive);
+            }
+        }
+
+        let mut unique = soroban_sdk::Vec::new(&env);
+        let mut total_weight: i128 = 0;
+        for holder in holders.iter() {
+            if unique.contains(&holder) {
+                continue;
+            }
+            let staked: u32 = env
+                .storage()
+                .persistent()
+                .get(&constants::storage::staked_balance(&creator, &holder))
+                .unwrap_or(0);
+            total_weight = total_weight
+                .checked_add(i128::from(staked))
+                .ok_or(ContractError::Overflow)?;
+            unique.push_back(holder);
+        }
+        if total_weight == 0 {
+            return Err(ContractError::NoKeyHolders);
+        }
+
+        let count_key = RevenueKey::CycleCount(creator.clone());
+        let cycle: u32 = env
+            .storage()
+            .persistent()
+            .get::<_, u32>(&count_key)
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(ContractError::Overflow)?;
+
+        let mut allocated: i128 = 0;
+        for holder in unique.iter() {
+            let staked: u32 = env
+                .storage()
+                .persistent()
+                .get(&constants::storage::staked_balance(&creator, &holder))
+                .unwrap_or(0);
+            let share = pool
+                .checked_mul(i128::from(staked))
+                .ok_or(ContractError::Overflow)?
+                / total_weight;
+            if share == 0 {
+                continue;
+            }
+            let share_key = RevenueKey::CycleShare(creator.clone(), cycle, holder);
+            env.storage().persistent().set(&share_key, &share);
+            extend_key_ttl_to_full_window(&env, &share_key);
+            allocated = allocated
+                .checked_add(share)
+                .ok_or(ContractError::Overflow)?;
+        }
+
+        let cycle_pool_key = RevenueKey::CyclePool(creator.clone(), cycle);
+        env.storage().persistent().set(&cycle_pool_key, &pool);
+        extend_key_ttl_to_full_window(&env, &cycle_pool_key);
+        env.storage().persistent().set(&pool_key, &(pool - allocated));
+        extend_key_ttl_to_full_window(&env, &pool_key);
+        env.storage().persistent().set(&count_key, &cycle);
+        extend_key_ttl_to_full_window(&env, &count_key);
+        env.storage()
+            .persistent()
+            .set(&last_key, &env.ledger().sequence());
+        extend_key_ttl_to_full_window(&env, &last_key);
+
+        Ok(cycle)
+    }
+
+    /// Claims `holder`'s allocated share for a distribution `cycle` and returns
+    /// the amount. Errors with `AlreadyClaimed` on a repeat claim and
+    /// `NoDividendClaimable` when the holder has no share in that cycle.
+    pub fn claim_cycle(
+        env: Env,
+        creator: Address,
+        holder: Address,
+        cycle: u32,
+    ) -> Result<i128, ContractError> {
+        holder.require_auth();
+        assert_not_paused(&env)?;
+
+        let claimed_key = RevenueKey::CycleClaimed(creator.clone(), cycle, holder.clone());
+        if env.storage().persistent().has(&claimed_key) {
+            return Err(ContractError::AlreadyClaimed);
+        }
+        let share: i128 = env
+            .storage()
+            .persistent()
+            .get(&RevenueKey::CycleShare(creator, cycle, holder))
+            .unwrap_or(0);
+        if share == 0 {
+            return Err(ContractError::NoDividendClaimable);
+        }
+        env.storage().persistent().set(&claimed_key, &true);
+        extend_key_ttl_to_full_window(&env, &claimed_key);
+        Ok(share)
     }
 
     /// Read-only view: returns a holder's snapshotted balance, or `0` if the
