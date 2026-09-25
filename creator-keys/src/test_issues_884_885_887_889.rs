@@ -4,8 +4,8 @@
 use crate::events::{MilestoneCrossedEvent, PauseStateChangedEvent};
 use crate::{ContractError, CreatorKeysContract, CreatorKeysContractClient, RegisterCreatorParams};
 use soroban_sdk::{
-    testutils::Address as _, testutils::Events as _, Address, BytesN, Env, IntoVal, String, Symbol,
-    TryFromVal, Val, Vec,
+    testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Address, BytesN, Env,
+    IntoVal, String, Symbol, TryFromVal, Val, Vec,
 };
 
 fn setup_test() -> (Env, CreatorKeysContractClient<'static>, Address, Address) {
