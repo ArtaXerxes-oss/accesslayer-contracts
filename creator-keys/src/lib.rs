@@ -2,7 +2,9 @@
 #![allow(clippy::enum_variant_names)] // `contracttype` macro-generated enums share prefixes by design
 pub mod quote_view_errors;
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, String, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, String, Vec,
+};
 
 pub mod events;
 pub mod test_new_features;
@@ -108,6 +110,8 @@ pub enum ContractError {
     BatchSizeExceeded = 70,
     /// The requested holder snapshot does not exist.
     SnapshotNotFound = 71,
+    /// The sender's keys are frozen and cannot be transferred.
+    FrozenPosition = 72,
 }
 
 /// Errors raised by the staking lifecycle entrypoints
@@ -416,6 +420,8 @@ pub mod constants {
         pub const PROTOCOL_FEE_RECIPIENT_BALANCE: DataKey = DataKey::ProtocolFeeRecipientBalance;
         pub const PROTOCOL_STATE_VERSION: DataKey = DataKey::ProtocolStateVersion;
         pub const PAUSED: DataKey = DataKey::Paused;
+        pub const CONTRACT_VERSION: DataKey = DataKey::ContractVersion;
+        pub const SUPPLY_MILESTONES: DataKey = DataKey::SupplyMilestones;
         pub const CURVE_SLOPE: DataKey = DataKey::CurveSlope;
         pub const TREASURY_BALANCE: DataKey = DataKey::TreasuryBalance;
         pub const RETENTION_POLICY: DataKey = DataKey::RetentionPolicy;
@@ -1085,6 +1091,10 @@ pub enum DataKey {
     CreatorFeeBalance(Address),
     ProtocolStateVersion,
     Paused,
+    /// Contract upgrade version counter (#884).
+    ContractVersion,
+    /// Ascending supply thresholds that emit `MilestoneCrossed` events (#887).
+    SupplyMilestones,
     DividendPerKeyAccumulated(Address),
     HolderDividendCheckpoint(Address, Address),
     HolderDividendPending(Address, Address),
@@ -1890,6 +1900,49 @@ fn is_paused(env: &Env) -> bool {
         .persistent()
         .get::<DataKey, bool>(&constants::storage::PAUSED)
         .unwrap_or(false)
+}
+
+/// Emits one `MilestoneCrossed` event per configured supply milestone crossed
+/// when a trade moves supply from `old_supply` to `new_supply` (#887).
+fn emit_milestone_crossings(
+    env: &Env,
+    creator: &Address,
+    old_supply: u32,
+    new_supply: u32,
+) -> Result<(), ContractError> {
+    let milestones: Vec<u32> = env
+        .storage()
+        .persistent()
+        .get(&constants::storage::SUPPLY_MILESTONES)
+        .unwrap_or(Vec::new(env));
+    let up = new_supply > old_supply;
+    let count = milestones.len();
+    for i in 0..count {
+        // Emit in the order the supply travels: ascending on buys, descending on sells.
+        let idx = if up { i } else { count - 1 - i };
+        let milestone = milestones.get(idx).ok_or(ContractError::Overflow)?;
+        let crossed = if up {
+            old_supply < milestone && milestone <= new_supply
+        } else {
+            new_supply < milestone && milestone <= old_supply
+        };
+        if crossed {
+            env.events().publish(
+                events::milestone_crossed_topics(creator),
+                events::MilestoneCrossedEvent {
+                    key_id: creator.clone(),
+                    tier: idx + 1,
+                    direction: if up {
+                        events::MILESTONE_DIRECTION_UP
+                    } else {
+                        events::MILESTONE_DIRECTION_DOWN
+                    },
+                    supply: new_supply,
+                },
+            );
+        }
+    }
+    Ok(())
 }
 
 fn assert_not_paused(env: &Env) -> Result<(), ContractError> {
@@ -3448,6 +3501,7 @@ impl CreatorKeysContract {
 
             // Supply and holder_count must always move together with buyer balance writes.
             write_creator_supply(&env, &creator, profile.supply);
+            emit_milestone_crossings(&env, &creator, profile.supply - 1, profile.supply)?;
 
             // Record the key creation ledger on the first buy for launch penalty tracking.
             if profile.supply == 1 {
@@ -3839,6 +3893,7 @@ impl CreatorKeysContract {
 
         // Supply and holder_count must always move together with buyer balance writes.
         write_creator_supply(&env, &creator, profile.supply);
+        emit_milestone_crossings(&env, &creator, profile.supply - 1, profile.supply)?;
 
         // Record the key creation ledger on the first buy for launch penalty tracking.
         if profile.supply == 1 {
@@ -4131,6 +4186,7 @@ impl CreatorKeysContract {
             .supply
             .checked_sub(1)
             .ok_or(ContractError::SellUnderflow)?;
+        emit_milestone_crossings(&env, &creator, profile.supply + 1, profile.supply)?;
 
         if new_balance == 0 {
             profile.holder_count = profile
@@ -4279,6 +4335,7 @@ impl CreatorKeysContract {
             .supply
             .checked_sub(amount)
             .ok_or(ContractError::SellUnderflow)?;
+        emit_milestone_crossings(&env, &creator, profile.supply + amount, profile.supply)?;
 
         if current_balance > 0 && new_balance == 0 {
             profile.holder_count = profile
@@ -4665,7 +4722,15 @@ impl CreatorKeysContract {
         env.storage()
             .persistent()
             .set(&constants::storage::PAUSED, &true);
-        env.events().publish((events::PAUSE_EVENT_NAME, admin), ());
+        env.events()
+            .publish((events::PAUSE_EVENT_NAME, admin.clone()), ());
+        env.events().publish(
+            events::pause_state_changed_topics(),
+            events::PauseStateChangedEvent {
+                paused: true,
+                caller: admin,
+            },
+        );
         Ok(())
     }
 
@@ -4679,13 +4744,89 @@ impl CreatorKeysContract {
             .persistent()
             .set(&constants::storage::PAUSED, &false);
         env.events()
-            .publish((events::UNPAUSE_EVENT_NAME, admin), ());
+            .publish((events::UNPAUSE_EVENT_NAME, admin.clone()), ());
+        env.events().publish(
+            events::pause_state_changed_topics(),
+            events::PauseStateChangedEvent {
+                paused: false,
+                caller: admin,
+            },
+        );
         Ok(())
     }
 
     /// Read-only view: returns whether the protocol is currently paused.
     pub fn get_is_paused(env: Env) -> bool {
         is_paused(&env)
+    }
+
+    /// Sets the supply milestones that emit `MilestoneCrossed` events (#887).
+    ///
+    /// Only the protocol admin may call this. Thresholds must be positive and
+    /// strictly ascending; the 1-based position of a threshold is its tier.
+    pub fn set_supply_milestones(
+        env: Env,
+        admin: Address,
+        milestones: Vec<u32>,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+        let mut previous = 0u32;
+        for milestone in milestones.iter() {
+            if milestone <= previous {
+                return Err(ContractError::NotPositiveAmount);
+            }
+            previous = milestone;
+        }
+        env.storage()
+            .persistent()
+            .set(&constants::storage::SUPPLY_MILESTONES, &milestones);
+        extend_key_ttl_to_full_window(&env, &constants::storage::SUPPLY_MILESTONES);
+        Ok(())
+    }
+
+    /// Read-only view: returns the configured supply milestones (empty if unset).
+    pub fn get_supply_milestones(env: Env) -> Vec<u32> {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::SUPPLY_MILESTONES)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Upgrades the contract WASM to `new_wasm_hash` and increments the version.
+    ///
+    /// Only the protocol admin may call this. Emits an `UpgradeExecuted` event
+    /// carrying the old and new version.
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+        let old_version = Self::get_version(env.clone());
+        let new_version = old_version.checked_add(1).ok_or(ContractError::Overflow)?;
+        env.storage()
+            .persistent()
+            .set(&constants::storage::CONTRACT_VERSION, &new_version);
+        extend_key_ttl_to_full_window(&env, &constants::storage::CONTRACT_VERSION);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        env.events().publish(
+            events::upgrade_executed_topics(&admin),
+            events::UpgradeExecutedEvent {
+                old_version,
+                new_version,
+            },
+        );
+        Ok(())
+    }
+
+    /// Read-only view: returns the current contract upgrade version (starts at 1).
+    pub fn get_version(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::CONTRACT_VERSION)
+            .unwrap_or(1)
     }
 
     /// Sets the protocol-wide deadline ledger after which buys are rejected.
@@ -6675,6 +6816,9 @@ impl CreatorKeysContract {
     /// - [`ContractError::NotRegistered`] if the creator is not registered.
     /// - [`ContractError::ZeroTransferAmount`] if `amount` is zero.
     /// - [`ContractError::SelfTransfer`] if the sender is the same as the recipient.
+    /// - [`ContractError::ZeroAddress`] if the recipient is the zero address.
+    /// - [`ContractError::CooldownActive`] if the sender is inside the creator's buy cooldown.
+    /// - [`ContractError::FrozenPosition`] if the sender's frozen keys block the transfer.
     /// - [`ContractError::InsufficientBalance`] if the sender holds fewer keys than `amount`.
     pub fn transfer_keys(
         env: Env,
@@ -6692,8 +6836,27 @@ impl CreatorKeysContract {
         if from == to {
             return Err(ContractError::SelfTransfer);
         }
+        validate_non_zero_address(&env, &to)?;
 
         let mut profile: CreatorProfile = read_registered_creator_profile(&env, &creator)?;
+
+        // Reject transfers while the sender is inside the creator's buy cooldown window.
+        let cooldown_ledgers: u32 = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::buy_cooldown(&creator))
+            .unwrap_or(0);
+        if cooldown_ledgers > 0 {
+            if let Some(last_ledger) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, u32>(&constants::storage::last_buy_ledger(&creator, &from))
+            {
+                if env.ledger().sequence().saturating_sub(last_ledger) < cooldown_ledgers {
+                    return Err(ContractError::CooldownActive);
+                }
+            }
+        }
 
         let from_balance_key = constants::storage::holder_balance_key(&creator, &from);
         let from_balance: u32 = env
@@ -6706,6 +6869,10 @@ impl CreatorKeysContract {
         settle_holder_dividends(&env, &creator, &from, from_balance)?;
 
         if available_holder_balance(&env, &creator, &from) < amount {
+            // Frozen keys are what make an otherwise sufficient balance unavailable.
+            if read_self_frozen_balance(&env, &creator, &from) > 0 && from_balance >= amount {
+                return Err(ContractError::FrozenPosition);
+            }
             return Err(ContractError::InsufficientBalance);
         }
 
@@ -11038,6 +11205,9 @@ mod test_issues;
 
 #[cfg(test)]
 mod test_issues_778_779_781_782;
+
+#[cfg(test)]
+mod test_issues_884_885_887_889;
 
 #[cfg(test)]
 mod test_staking_lifecycle;

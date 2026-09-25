@@ -1992,3 +1992,57 @@ pub struct PriceQueriedEvent {
 pub fn price_queried_topics(caller: &Address) -> (Symbol, Address) {
     (PRICE_QUERIED_EVENT_NAME, caller.clone())
 }
+
+// --- Pause state change (#889) ---
+
+pub const PAUSE_STATE_CHANGED_EVENT_NAME: Symbol = symbol_short!("pause_chg");
+
+/// Emitted by `pause` and `unpause` with the new state and the calling admin.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct PauseStateChangedEvent {
+    pub paused: bool,
+    pub caller: Address,
+}
+
+pub fn pause_state_changed_topics() -> (Symbol,) {
+    (PAUSE_STATE_CHANGED_EVENT_NAME,)
+}
+
+// --- Supply milestone crossings (#887) ---
+
+pub const MILESTONE_CROSSED_EVENT_NAME: Symbol = symbol_short!("mile_x");
+pub const MILESTONE_DIRECTION_UP: Symbol = symbol_short!("up");
+pub const MILESTONE_DIRECTION_DOWN: Symbol = symbol_short!("down");
+
+/// Emitted once per configured supply milestone crossed by a trade.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct MilestoneCrossedEvent {
+    pub key_id: Address,
+    /// 1-based position of the crossed milestone in the configured list.
+    pub tier: u32,
+    pub direction: Symbol,
+    /// Supply after the trade.
+    pub supply: u32,
+}
+
+pub fn milestone_crossed_topics(key_id: &Address) -> (Symbol, Address) {
+    (MILESTONE_CROSSED_EVENT_NAME, key_id.clone())
+}
+
+// --- Contract upgrade (#884) ---
+
+pub const UPGRADE_EXECUTED_EVENT_NAME: Symbol = symbol_short!("upgraded");
+
+/// Emitted by `upgrade` with the version before and after the upgrade.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct UpgradeExecutedEvent {
+    pub old_version: u32,
+    pub new_version: u32,
+}
+
+pub fn upgrade_executed_topics(admin: &Address) -> (Symbol, Address) {
+    (UPGRADE_EXECUTED_EVENT_NAME, admin.clone())
+}
