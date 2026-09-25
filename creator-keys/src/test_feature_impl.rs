@@ -220,7 +220,7 @@ fn update_metadata_non_creator_rejected() {
 
 #[test]
 fn update_config_succeeds_with_valid_params() {
-    let (env, client, admin) = setup();
+    let (_env, client, admin) = setup();
 
     client.update_config(
         &admin,
@@ -258,7 +258,7 @@ fn update_config_rejects_non_admin() {
 
 #[test]
 fn update_config_rejects_invalid_fee_bps_exceeding_10000() {
-    let (env, client, admin) = setup();
+    let (_env, client, admin) = setup();
 
     let result = client.try_update_config(
         &admin,
@@ -273,7 +273,7 @@ fn update_config_rejects_invalid_fee_bps_exceeding_10000() {
 
 #[test]
 fn update_config_rejects_negative_curve_slope() {
-    let (env, client, admin) = setup();
+    let (_env, client, admin) = setup();
 
     let result = client.try_update_config(
         &admin,
@@ -288,7 +288,7 @@ fn update_config_rejects_negative_curve_slope() {
 
 #[test]
 fn update_config_zero_slope_is_valid() {
-    let (env, client, admin) = setup();
+    let (_env, client, admin) = setup();
 
     client.update_config(
         &admin,
@@ -449,7 +449,7 @@ fn get_governance_address_returns_set_value() {
 
 #[test]
 fn set_snapshot_retention_round_trips() {
-    let (env, client, admin) = setup();
+    let (_env, client, admin) = setup();
 
     assert_eq!(client.get_snapshot_retention(), 0);
     client.set_snapshot_retention(&admin, &200u32);
