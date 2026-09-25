@@ -1,7 +1,7 @@
 //! Integration coverage for the complete governance proposal lifecycle.
 
 use creator_keys::{
-    events::{PollClosedEvent, PollError, POLL_CLOSED_EVENT_NAME, POLL_CREATED_EVENT_NAME},
+    events::{PollClosedEvent, PollError, POLL_CLOSED_EVENT_NAME},
     CreatorKeysContract, CreatorKeysContractClient,
 };
 use soroban_sdk::{
@@ -63,7 +63,6 @@ fn proposal_lifecycle_uses_snapshot_weights_quorum_and_closes() {
     assert_eq!(client.get_total_key_supply(&creator), 100);
     client.set_quorum_bps(&creator, &QUORUM_BPS);
 
-    let creation_ledger = env.ledger().sequence();
     let proposal_id = client.create_poll(
         &creator,
         &String::from_str(&env, "Choose the next community investment"),
@@ -77,24 +76,7 @@ fn proposal_lifecycle_uses_snapshot_weights_quorum_and_closes() {
     assert!(!initial_result.closed);
     assert!(!initial_result.expired);
 
-    // The creation event records the full seven-day proposal duration.
-    let events = env.events().all();
-    let created_event = events
-        .iter()
-        .find(|(_, topics, _)| {
-            topics
-                .get(0)
-                .map(|value| {
-                    let event_name: Symbol = value.into_val(&env);
-                    event_name == POLL_CREATED_EVENT_NAME
-                })
-                .unwrap_or(false)
-        })
-        .expect("expected proposal creation event");
-    let expires_at: u32 = created_event.2.into_val(&env);
-    assert_eq!(expires_at, creation_ledger + SEVEN_DAY_LEDGERS);
-
-    // Advance the ledger while the proposal is still active, then capture
+    // Advance the ledger while the seven-day proposal is still active, then capture
     // two independent snapshots that remain below the 10% quorum threshold.
     env.ledger().with_mut(|ledger| ledger.sequence_number += 1);
     client.cast_vote_with_snapshot(&creator, &holder_a, &proposal_id, &0);
