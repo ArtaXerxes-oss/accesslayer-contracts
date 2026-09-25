@@ -1232,6 +1232,28 @@ pub enum DataKey {
     Referrer(Address),
     /// Set once a referee's first referred trade has paid its referral reward.
     ReferralSettled(Address),
+    /// Address authorised to publish oracle prices.
+    OracleAddress,
+    /// Latest oracle price and the timestamp it was published at.
+    OraclePrice,
+    /// Age in seconds after which the oracle price is flagged stale.
+    OracleStalenessSecs,
+    /// Timelocked admin action keyed by action id.
+    ActionProposal(u32),
+    /// Next sequential timelocked action id.
+    ActionNextId,
+    /// Configured timelock delay in seconds for new actions.
+    TimelockDelaySecs,
+    /// (creator, holder) -> keys the holder has deposited in the staking vault.
+    VaultShares(Address, Address),
+    /// creator -> total keys deposited in the staking vault.
+    VaultTotalShares(Address),
+    /// creator -> vault reward accumulator per share (scaled).
+    VaultRewardAcc(Address),
+    /// (creator, holder) -> vault reward accumulator at the last settlement.
+    VaultRewardCheckpoint(Address, Address),
+    /// (creator, holder) -> settled but unclaimed vault rewards.
+    VaultRewardPending(Address, Address),
 }
 
 #[derive(Clone, Debug, PartialEq)]
