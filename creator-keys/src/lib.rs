@@ -124,9 +124,15 @@ pub enum ContractError {
     OraclePriceNotSet = 77,
     /// Vault deposit or withdraw input vectors differ in length.
     InvalidVaultInput = 78,
+    /// The configured spread exceeds the maximum allowed (`MAX_SPREAD_BPS`).
+    SpreadExceedsMax = 79,
+    /// The fee router address has not been configured.
+    FeeRouterNotSet = 80,
+    /// The spread basis-points value is invalid (reserved for future validation).
+    InvalidSpreadConfig = 81,
 }
 
-/// Errors raised by the staking lifecycle entrypoints
+/// Errors raised by the staking entrypoints
 /// ([`CreatorKeysContract::stake_keys_locked`], [`CreatorKeysContract::stake_extend`],
 /// [`CreatorKeysContract::early_unstake`] and [`CreatorKeysContract::claim_stake_reward`]).
 ///
@@ -724,6 +730,34 @@ pub mod constants {
         pub fn vault_reward_pending(creator: &Address, holder: &Address) -> DataKey {
             DataKey::VaultRewardPending(creator.clone(), holder.clone())
         }
+
+        pub fn fee_router() -> DataKey {
+            DataKey::FeeRouter
+        }
+
+        pub fn reward_pool_balance() -> DataKey {
+            DataKey::RewardPoolBalance
+        }
+
+        pub fn spread_bps(creator: &Address) -> DataKey {
+            DataKey::SpreadBps(creator.clone())
+        }
+
+        pub fn trade_count(creator: &Address) -> DataKey {
+            DataKey::TradeCount(creator.clone())
+        }
+
+        pub fn unique_trader_count(creator: &Address) -> DataKey {
+            DataKey::UniqueTraderCount(creator.clone())
+        }
+
+        pub fn has_traded(creator: &Address, trader: &Address) -> DataKey {
+            DataKey::HasTraded(creator.clone(), trader.clone())
+        }
+
+        pub fn creator_volume(creator: &Address) -> DataKey {
+            DataKey::CreatorVolume(creator.clone())
+        }
     }
     fn creator_key(creator: &Address) -> DataKey {
         DataKey::Creator(creator.clone())
@@ -1284,6 +1318,18 @@ pub enum DataKey {
     VaultRewardCheckpoint(Address, Address),
     /// (creator, holder) -> settled but unclaimed vault rewards.
     VaultRewardPending(Address, Address),
+    /// Address of the authorised fee router that may call `topup_reward_pool`.
+    FeeRouter,
+    /// Global staker reward pool balance (in stroops).
+    RewardPoolBalance,
+    /// Per-creator bid-ask spread in basis points.
+    SpreadBps(Address),
+    /// Per-creator cumulative trade count (buy + sell).
+    TradeCount(Address),
+    /// Per-creator count of unique wallets that have ever traded.
+    UniqueTraderCount(Address),
+    /// Per-creator per-wallet flag: true if this wallet has ever traded.
+    HasTraded(Address, Address),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -3370,6 +3416,115 @@ fn write_vault_position(
     extend_key_ttl_to_full_window(env, &staked_key);
 }
 
+/// Maximum bid-ask spread in basis points (50%).
+///
+/// Caps the on-chain spread setting so the sell price is never forced below
+/// 50% of the buy price.
+pub const MAX_SPREAD_BPS: u32 = 5_000;
+
+/// Aggregated analytics returned by `get_analytics`.
+///
+/// All fields are read-only accumulators updated on every trade.
+/// Fields are append-only — do not reorder.
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub struct AnalyticsView {
+    /// Creator address.
+    pub creator: Address,
+    /// Total number of buy and sell operations (all time).
+    pub trade_count: u64,
+    /// Number of unique wallets that have ever traded this creator's keys.
+    pub unique_traders: u64,
+    /// Cumulative trade volume in XLM stroops.
+    pub total_volume: i128,
+}
+
+/// Live market-state view for a creator's key, aggregating the individual
+/// read-only getters into a single call.
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub struct KeyMarketStatsView {
+    /// Creator address.
+    pub creator: Address,
+    /// Keys currently in circulation.
+    pub supply: u32,
+    /// Current buy price from the bonding curve, before fees (XLM stroops).
+    pub buy_price: i128,
+    /// Current sell price after the configured bid-ask spread (XLM stroops).
+    pub sell_price: i128,
+    /// Distinct wallets holding at least one key.
+    pub holder_count: u32,
+    /// Cumulative trade volume (XLM stroops).
+    pub volume: i128,
+}
+
+/// Applies the configured bid-ask spread to a buy price to produce the sell price.
+///
+/// `sell_price = buy_price - floor(buy_price * spread_bps / 10_000)`
+/// When spread is zero the sell price equals the buy price.
+/// Returns `None` on overflow (should never happen with sensible inputs).
+fn apply_spread(env: &Env, creator: &Address, buy_price: i128) -> Result<i128, ContractError> {
+    let spread_bps: u32 = env
+        .storage()
+        .persistent()
+        .get(&constants::storage::spread_bps(creator))
+        .unwrap_or(0);
+
+    if spread_bps == 0 {
+        return Ok(buy_price);
+    }
+
+    let spread_amount =
+        fee::apply_percentage_fee(buy_price, spread_bps).ok_or(ContractError::Overflow)?;
+    buy_price
+        .checked_sub(spread_amount)
+        .ok_or(ContractError::Overflow)
+}
+
+/// Increments the per-creator trade count and, on first trade from a wallet,
+/// increments the unique trader count. Also accumulates volume.
+fn accrue_trade_analytics(
+    env: &Env,
+    creator: &Address,
+    trader: &Address,
+    price: i128,
+) -> Result<(), ContractError> {
+    // Increment trade count
+    let trade_key = constants::storage::trade_count(creator);
+    let current_trades: u64 = env.storage().persistent().get(&trade_key).unwrap_or(0);
+    let new_trades = current_trades
+        .checked_add(1)
+        .ok_or(ContractError::Overflow)?;
+    env.storage().persistent().set(&trade_key, &new_trades);
+
+    // Increment unique trader count on first trade from this wallet
+    let has_traded_key = constants::storage::has_traded(creator, trader);
+    let already_traded: bool = env
+        .storage()
+        .persistent()
+        .get(&has_traded_key)
+        .unwrap_or(false);
+    if !already_traded {
+        env.storage().persistent().set(&has_traded_key, &true);
+        let ut_key = constants::storage::unique_trader_count(creator);
+        let current_ut: u64 = env.storage().persistent().get(&ut_key).unwrap_or(0);
+        let new_ut = current_ut.checked_add(1).ok_or(ContractError::Overflow)?;
+        env.storage().persistent().set(&ut_key, &new_ut);
+    }
+
+    // Accumulate volume
+    if price > 0 {
+        let vol_key = constants::storage::creator_volume(creator);
+        let current_vol: i128 = env.storage().persistent().get(&vol_key).unwrap_or(0);
+        let new_vol = current_vol
+            .checked_add(price)
+            .ok_or(ContractError::Overflow)?;
+        env.storage().persistent().set(&vol_key, &new_vol);
+    }
+
+    Ok(())
+}
+
 #[contract]
 pub struct CreatorKeysContract;
 
@@ -4332,6 +4487,9 @@ impl CreatorKeysContract {
 
         record_trade_price_snapshot(&env, &creator);
 
+        // Update analytics accumulators atomically with the trade.
+        accrue_trade_analytics(&env, &creator, &buyer, price)?;
+
         // Extend TTL for creator storage after successful buy
         extend_creator_ttl(&env, &creator);
 
@@ -4460,7 +4618,9 @@ impl CreatorKeysContract {
             .supply
             .checked_sub(1)
             .ok_or(ContractError::SellUnderflow)?;
-        let price = compute_bonding_curve_price(&env, &creator, base_price, sell_supply)?;
+        let curve_price = compute_bonding_curve_price(&env, &creator, base_price, sell_supply)?;
+        // Apply bid-ask spread after bonding curve, before slippage check.
+        let price = apply_spread(&env, &creator, curve_price)?;
 
         // Settle dividends before balance changes so earnings are captured at old balance.
         settle_holder_dividends(&env, &creator, &seller, current_balance)?;
@@ -4552,11 +4712,14 @@ impl CreatorKeysContract {
         };
 
         env.events().publish(
-            (events::SELL_EVENT_NAME, creator.clone(), seller),
+            (events::SELL_EVENT_NAME, creator.clone(), seller.clone()),
             sell_event_data,
         );
 
         record_trade_price_snapshot(&env, &creator);
+
+        // Update analytics accumulators atomically with the trade.
+        accrue_trade_analytics(&env, &creator, &seller, price)?;
 
         // Extend TTL for creator storage after successful sell
         extend_creator_ttl(&env, &creator);
@@ -6904,7 +7067,9 @@ impl CreatorKeysContract {
             .checked_sub(1)
             .ok_or(ContractError::SellUnderflow)?;
         let curve_price = compute_bonding_curve_price(&env, &creator, normalized, sell_supply)?;
-        let Some(price) = normalize_quote_amount(curve_price)? else {
+        // Apply spread after bonding curve, before fee calculation.
+        let spread_adjusted = apply_spread(&env, &creator, curve_price)?;
+        let Some(price) = normalize_quote_amount(spread_adjusted)? else {
             return Ok(zero_quote_response());
         };
 
@@ -11296,6 +11461,284 @@ impl CreatorKeysContract {
             auction_sold,
         })
     }
+
+    // -----------------------------------------------------------------------
+    // Feature: Reward Pool Top-Up (#5)
+    // -----------------------------------------------------------------------
+
+    /// Sets the authorised fee router address.
+    ///
+    /// Only the protocol admin may call this. The fee router is the only address
+    /// permitted to call [`topup_reward_pool`].
+    ///
+    /// # Errors
+    /// - [`ContractError::Unauthorized`] if `admin` is not the protocol admin.
+    /// - [`ContractError::ZeroAddress`] if `router` is the Stellar zero address.
+    pub fn set_fee_router(env: Env, admin: Address, router: Address) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+        validate_non_zero_address(&env, &router)?;
+        env.storage()
+            .persistent()
+            .set(&constants::storage::fee_router(), &router);
+        Ok(())
+    }
+
+    /// Read-only view: returns the current fee router address.
+    ///
+    /// Returns `None` when no fee router has been configured.
+    pub fn get_fee_router(env: Env) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::fee_router())
+    }
+
+    /// Adds `amount` stroops to the staker reward pool.
+    ///
+    /// Only the authorised fee router (set via [`set_fee_router`]) may call this.
+    /// The caller must `require_auth` via Soroban's auth framework.
+    ///
+    /// # Errors
+    /// - [`ContractError::FeeRouterNotSet`] if no fee router has been configured.
+    /// - [`ContractError::Unauthorized`] if `sender` is not the configured fee router.
+    /// - [`ContractError::NotPositiveAmount`] if `amount` is zero or negative.
+    /// - [`ContractError::Overflow`] if adding `amount` would overflow the pool balance.
+    pub fn topup_reward_pool(
+        env: Env,
+        sender: Address,
+        amount: i128,
+    ) -> Result<i128, ContractError> {
+        sender.require_auth();
+
+        let router: Address = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::fee_router())
+            .ok_or(ContractError::FeeRouterNotSet)?;
+
+        if sender != router {
+            return Err(ContractError::Unauthorized);
+        }
+
+        if amount <= 0 {
+            return Err(ContractError::NotPositiveAmount);
+        }
+
+        let current: i128 = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::reward_pool_balance())
+            .unwrap_or(0);
+
+        let new_balance = current.checked_add(amount).ok_or(ContractError::Overflow)?;
+
+        env.storage()
+            .persistent()
+            .set(&constants::storage::reward_pool_balance(), &new_balance);
+
+        env.events().publish(
+            events::reward_pool_topup_topics(&sender),
+            events::RewardPoolTopUpEvent {
+                sender,
+                amount,
+                new_pool_balance: new_balance,
+            },
+        );
+
+        Ok(new_balance)
+    }
+
+    /// Read-only view: returns the current staker reward pool balance.
+    ///
+    /// Returns `0` before any top-up has been made.
+    pub fn get_reward_pool_balance(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::reward_pool_balance())
+            .unwrap_or(0)
+    }
+
+    // -----------------------------------------------------------------------
+    // Feature: Bid-Ask Spread (#6)
+    // -----------------------------------------------------------------------
+
+    /// Sets the bid-ask spread for a creator's bonding curve.
+    ///
+    /// The spread reduces the sell price relative to the buy price:
+    /// `sell_price = buy_price - (buy_price * spread_bps / 10_000)`.
+    /// A spread of zero means buy price equals sell price.
+    ///
+    /// # Errors
+    /// - [`ContractError::Unauthorized`] if `admin` is not the protocol admin.
+    /// - [`ContractError::NotRegistered`] if the creator is not registered.
+    /// - [`ContractError::SpreadExceedsMax`] if `spread_bps > MAX_SPREAD_BPS`.
+    pub fn set_spread_bps(
+        env: Env,
+        admin: Address,
+        creator: Address,
+        spread_bps: u32,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+        read_registered_creator_profile(&env, &creator)?;
+
+        if spread_bps > MAX_SPREAD_BPS {
+            return Err(ContractError::SpreadExceedsMax);
+        }
+
+        let old_spread_bps: u32 = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::spread_bps(&creator))
+            .unwrap_or(0);
+
+        env.storage()
+            .persistent()
+            .set(&constants::storage::spread_bps(&creator), &spread_bps);
+
+        env.events().publish(
+            events::spread_updated_topics(&creator),
+            events::SpreadUpdatedEvent {
+                creator,
+                old_spread_bps,
+                new_spread_bps: spread_bps,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Read-only view: returns the configured spread in basis points for a creator.
+    ///
+    /// Returns `0` when no spread has been set (buy price equals sell price).
+    pub fn get_spread_bps(env: Env, creator: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::spread_bps(&creator))
+            .unwrap_or(0)
+    }
+
+    // -----------------------------------------------------------------------
+    // Feature: Read-only view functions (#7)
+    // -----------------------------------------------------------------------
+
+    /// Read-only view: returns the current circulating supply for a key.
+    ///
+    /// # Errors
+    /// - [`ContractError::NotRegistered`] if the creator is not registered.
+    pub fn get_supply(env: Env, creator: Address) -> Result<u32, ContractError> {
+        let profile = read_registered_creator_profile(&env, &creator)?;
+        Ok(profile.supply)
+    }
+
+    /// Read-only view: returns the current buy and sell price for a creator's key,
+    /// with the configured bid-ask spread applied to the sell price.
+    ///
+    /// `buy_price` is the raw bonding-curve price (before fees).
+    /// `sell_price` is `buy_price` reduced by the configured spread.
+    /// Both are expressed in XLM stroops.
+    ///
+    /// # Errors
+    /// - [`ContractError::NotRegistered`] if the creator is not registered.
+    /// - [`ContractError::KeyPriceNotSet`] if no key price has been configured.
+    pub fn get_bid_ask_price(env: Env, creator: Address) -> Result<(i128, i128), ContractError> {
+        let base_price: i128 = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::KEY_PRICE)
+            .ok_or(ContractError::KeyPriceNotSet)?;
+        let profile = read_registered_creator_profile(&env, &creator)?;
+        let buy_price = compute_bonding_curve_price(&env, &creator, base_price, profile.supply)?;
+        let sell_price = apply_spread(&env, &creator, buy_price)?;
+        Ok((buy_price, sell_price))
+    }
+
+    /// Read-only view: returns the unique holder count for a creator's key.
+    ///
+    /// # Errors
+    /// - [`ContractError::NotRegistered`] if the creator is not registered.
+    pub fn get_holder_count(env: Env, creator: Address) -> Result<u32, ContractError> {
+        let profile = read_registered_creator_profile(&env, &creator)?;
+        Ok(profile.holder_count)
+    }
+
+    /// Read-only view: returns the cumulative trade volume in XLM stroops for a creator.
+    ///
+    /// Returns `0` when no volume has been recorded yet.
+    ///
+    /// # Errors
+    /// - [`ContractError::NotRegistered`] if the creator is not registered.
+    pub fn get_volume(env: Env, creator: Address) -> Result<i128, ContractError> {
+        read_registered_creator_profile(&env, &creator)?;
+        Ok(env
+            .storage()
+            .persistent()
+            .get::<DataKey, i128>(&constants::storage::creator_volume(&creator))
+            .unwrap_or(0))
+    }
+
+    /// Read-only view: aggregates the market-facing state of a creator's key in a
+    /// single call — supply, holder count, spread-aware buy/sell prices and volume.
+    ///
+    /// Distinct from [`KeyStatsView`], which reports creator-configured limits
+    /// (caps, cooldowns, auction terms) rather than live market data.
+    ///
+    /// # Errors
+    /// - [`ContractError::NotRegistered`] if the creator is not registered.
+    /// - [`ContractError::KeyPriceNotSet`] if no key price has been configured.
+    pub fn get_key_market_stats(
+        env: Env,
+        creator: Address,
+    ) -> Result<KeyMarketStatsView, ContractError> {
+        let (buy_price, sell_price) = Self::get_bid_ask_price(env.clone(), creator.clone())?;
+        let supply = Self::get_supply(env.clone(), creator.clone())?;
+        let holder_count = Self::get_holder_count(env.clone(), creator.clone())?;
+        let volume = Self::get_volume(env, creator.clone())?;
+        Ok(KeyMarketStatsView {
+            creator,
+            supply,
+            buy_price,
+            sell_price,
+            holder_count,
+            volume,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Feature: Analytics accumulators (#8)
+    // -----------------------------------------------------------------------
+
+    /// Read-only view: returns aggregated trade analytics for a creator.
+    ///
+    /// Returns trade count, unique trader count, and total volume. All values
+    /// are updated atomically on every buy and sell.
+    ///
+    /// # Errors
+    /// - [`ContractError::NotRegistered`] if the creator is not registered.
+    pub fn get_analytics(env: Env, creator: Address) -> Result<AnalyticsView, ContractError> {
+        read_registered_creator_profile(&env, &creator)?;
+        let trade_count: u64 = env
+            .storage()
+            .persistent()
+            .get::<DataKey, u64>(&constants::storage::trade_count(&creator))
+            .unwrap_or(0);
+        let unique_traders: u64 = env
+            .storage()
+            .persistent()
+            .get::<DataKey, u64>(&constants::storage::unique_trader_count(&creator))
+            .unwrap_or(0);
+        let total_volume: i128 = env
+            .storage()
+            .persistent()
+            .get::<DataKey, i128>(&constants::storage::creator_volume(&creator))
+            .unwrap_or(0);
+        Ok(AnalyticsView {
+            creator,
+            trade_count,
+            unique_traders,
+            total_volume,
+        })
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -12409,6 +12852,9 @@ mod tests {
 
 #[cfg(test)]
 mod test_issues;
+
+#[cfg(test)]
+mod test;
 
 #[cfg(test)]
 mod test_issues_778_779_781_782;
