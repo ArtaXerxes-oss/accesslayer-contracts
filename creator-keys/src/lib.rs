@@ -108,6 +108,16 @@ pub enum ContractError {
     BatchSizeExceeded = 70,
     /// The requested holder snapshot does not exist.
     SnapshotNotFound = 71,
+    /// `execute_action` was called before the timelock delay elapsed.
+    TimelockNotElapsed = 72,
+    /// The timelocked action was already executed or cancelled.
+    ActionNotPending = 73,
+    /// The timelock delay must be between 1 second and 30 days.
+    InvalidTimelockDelay = 74,
+    /// No oracle price has been published yet.
+    OraclePriceNotSet = 75,
+    /// Vault deposit or withdraw input vectors differ in length.
+    InvalidVaultInput = 76,
 }
 
 /// Errors raised by the staking lifecycle entrypoints
@@ -654,6 +664,36 @@ pub mod constants {
         pub fn price_history(creator: &Address) -> DataKey {
             DataKey::PriceHistory(creator.clone())
         }
+
+        pub const ORACLE_ADDRESS: DataKey = DataKey::OracleAddress;
+        pub const ORACLE_PRICE: DataKey = DataKey::OraclePrice;
+        pub const ORACLE_STALENESS_SECS: DataKey = DataKey::OracleStalenessSecs;
+        pub const ACTION_NEXT_ID: DataKey = DataKey::ActionNextId;
+        pub const TIMELOCK_DELAY_SECS: DataKey = DataKey::TimelockDelaySecs;
+
+        pub fn action_proposal(action_id: u32) -> DataKey {
+            DataKey::ActionProposal(action_id)
+        }
+
+        pub fn vault_shares(creator: &Address, holder: &Address) -> DataKey {
+            DataKey::VaultShares(creator.clone(), holder.clone())
+        }
+
+        pub fn vault_total_shares(creator: &Address) -> DataKey {
+            DataKey::VaultTotalShares(creator.clone())
+        }
+
+        pub fn vault_reward_acc(creator: &Address) -> DataKey {
+            DataKey::VaultRewardAcc(creator.clone())
+        }
+
+        pub fn vault_reward_checkpoint(creator: &Address, holder: &Address) -> DataKey {
+            DataKey::VaultRewardCheckpoint(creator.clone(), holder.clone())
+        }
+
+        pub fn vault_reward_pending(creator: &Address, holder: &Address) -> DataKey {
+            DataKey::VaultRewardPending(creator.clone(), holder.clone())
+        }
     }
     fn creator_key(creator: &Address) -> DataKey {
         DataKey::Creator(creator.clone())
@@ -1176,6 +1216,28 @@ pub enum DataKey {
     EarlyExitPenaltyBps(Address),
     /// Maximum buy quantity per transaction for a creator.
     MaxBuyQuantity(Address),
+    /// Address authorised to publish oracle prices.
+    OracleAddress,
+    /// Latest oracle price and the timestamp it was published at.
+    OraclePrice,
+    /// Age in seconds after which the oracle price is flagged stale.
+    OracleStalenessSecs,
+    /// Timelocked admin action keyed by action id.
+    ActionProposal(u32),
+    /// Next sequential timelocked action id.
+    ActionNextId,
+    /// Configured timelock delay in seconds for new actions.
+    TimelockDelaySecs,
+    /// (creator, holder) -> keys the holder has deposited in the staking vault.
+    VaultShares(Address, Address),
+    /// creator -> total keys deposited in the staking vault.
+    VaultTotalShares(Address),
+    /// creator -> vault reward accumulator per share (scaled).
+    VaultRewardAcc(Address),
+    /// (creator, holder) -> vault reward accumulator at the last settlement.
+    VaultRewardCheckpoint(Address, Address),
+    /// (creator, holder) -> settled but unclaimed vault rewards.
+    VaultRewardPending(Address, Address),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1341,6 +1403,39 @@ pub struct TimelockProposal {
     pub proposer: Address,
     pub proposed_at: u32,
     pub execution_not_before: u32,
+    pub executed: bool,
+    pub cancelled: bool,
+}
+
+/// Latest price published by the authorised oracle address.
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub struct OraclePrice {
+    pub price: i128,
+    /// Ledger timestamp (seconds) at which the price was published.
+    pub updated_at: u64,
+}
+
+/// Oracle price together with its staleness state, returned by `get_oracle_price`.
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub struct OraclePriceView {
+    pub price: i128,
+    pub updated_at: u64,
+    /// `true` when the price is older than the configured staleness threshold.
+    pub is_stale: bool,
+}
+
+/// A timelocked admin action awaiting its execution timestamp.
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub struct TimelockAction {
+    pub change_type: TimelockChangeType,
+    pub payload: soroban_sdk::Bytes,
+    pub proposer: Address,
+    pub proposed_at: u64,
+    /// Earliest ledger timestamp (seconds) at which the action may execute.
+    pub execution_not_before: u64,
     pub executed: bool,
     pub cancelled: bool,
 }
@@ -2960,6 +3055,86 @@ fn emit_price_queried(env: &Env, caller: &Address, creator: &Address, price: i12
             price,
         },
     );
+}
+
+/// Scaling factor for the per-share vault reward accumulator.
+const VAULT_REWARD_PRECISION: i128 = 1_000_000;
+
+/// Maximum number of creator keys accepted by one vault deposit or withdraw.
+const VAULT_MAX_BATCH: u32 = 10;
+
+/// Default age in seconds after which an oracle price is flagged stale.
+const DEFAULT_ORACLE_STALENESS_SECS: u64 = 3_600;
+
+/// Default timelock delay in seconds (48 hours).
+const DEFAULT_TIMELOCK_DELAY_SECS: u64 = 172_800;
+
+/// Maximum configurable timelock delay in seconds (30 days).
+const MAX_TIMELOCK_DELAY_SECS: u64 = 2_592_000;
+
+fn read_vault_shares(env: &Env, creator: &Address, holder: &Address) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&constants::storage::vault_shares(creator, holder))
+        .unwrap_or(0)
+}
+
+fn read_vault_total_shares(env: &Env, creator: &Address) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&constants::storage::vault_total_shares(creator))
+        .unwrap_or(0)
+}
+
+/// Moves the rewards a holder earned since their last checkpoint into the
+/// pending balance. Must run before a holder's vault shares change.
+fn settle_vault_rewards(
+    env: &Env,
+    creator: &Address,
+    holder: &Address,
+    shares: u32,
+) -> Result<(), ContractError> {
+    let acc: i128 = env
+        .storage()
+        .persistent()
+        .get(&constants::storage::vault_reward_acc(creator))
+        .unwrap_or(0);
+    let checkpoint_key = constants::storage::vault_reward_checkpoint(creator, holder);
+    let checkpoint: i128 = env.storage().persistent().get(&checkpoint_key).unwrap_or(0);
+    let earned = i128::from(shares)
+        .checked_mul(acc.checked_sub(checkpoint).ok_or(ContractError::Overflow)?)
+        .ok_or(ContractError::Overflow)?
+        / VAULT_REWARD_PRECISION;
+
+    let pending_key = constants::storage::vault_reward_pending(creator, holder);
+    let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+    let new_pending = pending.checked_add(earned).ok_or(ContractError::Overflow)?;
+    env.storage().persistent().set(&pending_key, &new_pending);
+    env.storage().persistent().set(&checkpoint_key, &acc);
+    extend_key_ttl_to_full_window(env, &pending_key);
+    extend_key_ttl_to_full_window(env, &checkpoint_key);
+    Ok(())
+}
+
+/// Writes a holder's vault shares, the creator's total vault shares and the
+/// holder's staked balance after a deposit or withdrawal.
+fn write_vault_position(
+    env: &Env,
+    creator: &Address,
+    holder: &Address,
+    holder_shares: u32,
+    total_shares: u32,
+    staked_balance: u32,
+) {
+    let shares_key = constants::storage::vault_shares(creator, holder);
+    let total_key = constants::storage::vault_total_shares(creator);
+    let staked_key = constants::storage::staked_balance(creator, holder);
+    env.storage().persistent().set(&shares_key, &holder_shares);
+    env.storage().persistent().set(&total_key, &total_shares);
+    env.storage().persistent().set(&staked_key, &staked_balance);
+    extend_key_ttl_to_full_window(env, &shares_key);
+    extend_key_ttl_to_full_window(env, &total_key);
+    extend_key_ttl_to_full_window(env, &staked_key);
 }
 
 #[contract]
@@ -9461,6 +9636,567 @@ impl CreatorKeysContract {
         is_caller_approved(&env, &caller)
     }
 
+    // =========================================================================
+    // #905 — External price oracle feed
+    // =========================================================================
+
+    /// Sets the address authorised to publish oracle prices (admin-only).
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::Unauthorized`] if `admin` is not the protocol admin.
+    pub fn set_oracle_address(
+        env: Env,
+        admin: Address,
+        oracle: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+
+        env.storage()
+            .persistent()
+            .set(&constants::storage::ORACLE_ADDRESS, &oracle);
+        extend_key_ttl_to_full_window(&env, &constants::storage::ORACLE_ADDRESS);
+        Ok(())
+    }
+
+    /// Read-only view: returns the authorised oracle address, if configured.
+    pub fn get_oracle_address(env: Env) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::ORACLE_ADDRESS)
+    }
+
+    /// Sets the age in seconds after which the oracle price is stale (admin-only).
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::Unauthorized`] if `admin` is not the protocol admin.
+    /// - [`ContractError::NotPositiveAmount`] if `threshold_secs` is zero.
+    pub fn set_oracle_staleness_threshold(
+        env: Env,
+        admin: Address,
+        threshold_secs: u64,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+
+        if threshold_secs == 0 {
+            return Err(ContractError::NotPositiveAmount);
+        }
+        env.storage()
+            .persistent()
+            .set(&constants::storage::ORACLE_STALENESS_SECS, &threshold_secs);
+        extend_key_ttl_to_full_window(&env, &constants::storage::ORACLE_STALENESS_SECS);
+        Ok(())
+    }
+
+    /// Publishes a new oracle price. Only the authorised oracle address may call this.
+    ///
+    /// The price is stored with the current ledger timestamp so `get_oracle_price`
+    /// can flag it as stale, and an [`events::OraclePriceUpdatedEvent`] is emitted.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::Unauthorized`] if no oracle is configured or `oracle`
+    ///   is not the configured oracle address.
+    /// - [`ContractError::NotPositiveAmount`] if `price` is not positive.
+    pub fn set_oracle_price(env: Env, oracle: Address, price: i128) -> Result<(), ContractError> {
+        oracle.require_auth();
+
+        let configured: Address = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::ORACLE_ADDRESS)
+            .ok_or(ContractError::Unauthorized)?;
+        if oracle != configured {
+            return Err(ContractError::Unauthorized);
+        }
+        if price <= 0 {
+            return Err(ContractError::NotPositiveAmount);
+        }
+
+        let timestamp = env.ledger().timestamp();
+        env.storage().persistent().set(
+            &constants::storage::ORACLE_PRICE,
+            &OraclePrice {
+                price,
+                updated_at: timestamp,
+            },
+        );
+        extend_key_ttl_to_full_window(&env, &constants::storage::ORACLE_PRICE);
+
+        env.events().publish(
+            events::oracle_price_updated_topics(&oracle),
+            events::OraclePriceUpdatedEvent {
+                oracle: oracle.clone(),
+                price,
+                timestamp,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Read-only view: returns the latest oracle price, its publish timestamp and
+    /// whether it is older than the configured staleness threshold.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::OraclePriceNotSet`] if no price has been published.
+    pub fn get_oracle_price(env: Env) -> Result<OraclePriceView, ContractError> {
+        let stored: OraclePrice = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::ORACLE_PRICE)
+            .ok_or(ContractError::OraclePriceNotSet)?;
+        let threshold: u64 = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::ORACLE_STALENESS_SECS)
+            .unwrap_or(DEFAULT_ORACLE_STALENESS_SECS);
+        let age = env.ledger().timestamp().saturating_sub(stored.updated_at);
+
+        Ok(OraclePriceView {
+            price: stored.price,
+            updated_at: stored.updated_at,
+            is_stale: age > threshold,
+        })
+    }
+
+    // =========================================================================
+    // #904 — Time-locked admin actions
+    // =========================================================================
+
+    /// Sets the delay in seconds applied to newly proposed actions (admin-only).
+    ///
+    /// Actions already proposed keep the execution timestamp they were given.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::Unauthorized`] if `admin` is not the protocol admin.
+    /// - [`ContractError::InvalidTimelockDelay`] if `delay_secs` is zero or above 30 days.
+    pub fn set_timelock_delay(
+        env: Env,
+        admin: Address,
+        delay_secs: u64,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+
+        if delay_secs == 0 || delay_secs > MAX_TIMELOCK_DELAY_SECS {
+            return Err(ContractError::InvalidTimelockDelay);
+        }
+        env.storage()
+            .persistent()
+            .set(&constants::storage::TIMELOCK_DELAY_SECS, &delay_secs);
+        extend_key_ttl_to_full_window(&env, &constants::storage::TIMELOCK_DELAY_SECS);
+        Ok(())
+    }
+
+    /// Read-only view: returns the delay in seconds applied to new actions.
+    pub fn get_timelock_delay(env: Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::TIMELOCK_DELAY_SECS)
+            .unwrap_or(DEFAULT_TIMELOCK_DELAY_SECS)
+    }
+
+    /// Proposes an admin action that cannot execute until the timelock delay has
+    /// elapsed, and returns its action id.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::Unauthorized`] if `admin` is not the protocol admin.
+    /// - [`ContractError::Overflow`] on arithmetic overflow.
+    pub fn propose_action(
+        env: Env,
+        admin: Address,
+        change_type: TimelockChangeType,
+        payload: soroban_sdk::Bytes,
+    ) -> Result<u32, ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+
+        let action_id: u32 = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::ACTION_NEXT_ID)
+            .unwrap_or(1u32);
+        let next_id = action_id.checked_add(1).ok_or(ContractError::Overflow)?;
+
+        let proposed_at = env.ledger().timestamp();
+        let execution_not_before = proposed_at
+            .checked_add(Self::get_timelock_delay(env.clone()))
+            .ok_or(ContractError::Overflow)?;
+
+        let action_key = constants::storage::action_proposal(action_id);
+        env.storage().persistent().set(
+            &action_key,
+            &TimelockAction {
+                change_type,
+                payload,
+                proposer: admin.clone(),
+                proposed_at,
+                execution_not_before,
+                executed: false,
+                cancelled: false,
+            },
+        );
+        env.storage()
+            .persistent()
+            .set(&constants::storage::ACTION_NEXT_ID, &next_id);
+        extend_key_ttl_to_full_window(&env, &action_key);
+        extend_key_ttl_to_full_window(&env, &constants::storage::ACTION_NEXT_ID);
+
+        env.events().publish(
+            events::action_proposed_topics(action_id),
+            events::ActionProposedEvent {
+                action_id,
+                proposer: admin,
+                change_type: change_type as u32,
+                proposed_at,
+                execution_not_before,
+            },
+        );
+
+        Ok(action_id)
+    }
+
+    /// Executes a proposed action once its execution timestamp has been reached.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::Unauthorized`] if `admin` is not the protocol admin.
+    /// - [`ContractError::ProposalNotFound`] if `action_id` does not exist.
+    /// - [`ContractError::ActionNotPending`] if the action was already executed or cancelled.
+    /// - [`ContractError::TimelockNotElapsed`] if the delay has not yet elapsed.
+    pub fn execute_action(env: Env, admin: Address, action_id: u32) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+
+        let action_key = constants::storage::action_proposal(action_id);
+        let mut action: TimelockAction = env
+            .storage()
+            .persistent()
+            .get(&action_key)
+            .ok_or(ContractError::ProposalNotFound)?;
+        if action.executed || action.cancelled {
+            return Err(ContractError::ActionNotPending);
+        }
+
+        let now = env.ledger().timestamp();
+        if now < action.execution_not_before {
+            return Err(ContractError::TimelockNotElapsed);
+        }
+
+        action.executed = true;
+        env.storage().persistent().set(&action_key, &action);
+        extend_key_ttl_to_full_window(&env, &action_key);
+
+        env.events().publish(
+            events::action_executed_topics(action_id),
+            events::ActionExecutedEvent {
+                action_id,
+                executed_at: now,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Cancels a pending action so it can no longer be executed (admin-only).
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::Unauthorized`] if `admin` is not the protocol admin.
+    /// - [`ContractError::ProposalNotFound`] if `action_id` does not exist.
+    /// - [`ContractError::ActionNotPending`] if the action was already executed or cancelled.
+    pub fn cancel_action(env: Env, admin: Address, action_id: u32) -> Result<(), ContractError> {
+        admin.require_auth();
+        assert_is_admin(&env, &admin)?;
+
+        let action_key = constants::storage::action_proposal(action_id);
+        let mut action: TimelockAction = env
+            .storage()
+            .persistent()
+            .get(&action_key)
+            .ok_or(ContractError::ProposalNotFound)?;
+        if action.executed || action.cancelled {
+            return Err(ContractError::ActionNotPending);
+        }
+
+        action.cancelled = true;
+        env.storage().persistent().set(&action_key, &action);
+        extend_key_ttl_to_full_window(&env, &action_key);
+
+        env.events().publish(
+            events::action_cancelled_topics(action_id),
+            events::ActionCancelledEvent {
+                action_id,
+                cancelled_at: env.ledger().timestamp(),
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Read-only view: returns a timelocked action by id.
+    pub fn get_action(env: Env, action_id: u32) -> Option<TimelockAction> {
+        env.storage()
+            .persistent()
+            .get(&constants::storage::action_proposal(action_id))
+    }
+
+    // =========================================================================
+    // #908 — Multi-key staking vault
+    // =========================================================================
+
+    /// Deposits keys from several creators into the holder's vault position.
+    ///
+    /// `creator_ids[i]` and `amounts[i]` describe one deposit. Deposited keys are
+    /// booked as staked (so they cannot be sold) and credited 1:1 as vault shares,
+    /// which entitle the holder to a pro-rata share of vault rewards. Emits a
+    /// [`events::VaultDepositEvent`] per creator.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::InvalidVaultInput`] if the vectors differ in length.
+    /// - [`ContractError::BatchSizeExceeded`] if empty or more than 10 entries.
+    /// - [`ContractError::NotPositiveAmount`] if an amount is zero.
+    /// - [`ContractError::NotRegistered`] if a creator is not registered.
+    /// - [`ContractError::InsufficientBalance`] if liquid keys are below the amount.
+    pub fn vault_deposit(
+        env: Env,
+        holder: Address,
+        creator_ids: soroban_sdk::Vec<Address>,
+        amounts: soroban_sdk::Vec<u32>,
+    ) -> Result<(), ContractError> {
+        holder.require_auth();
+        assert_not_paused(&env)?;
+
+        if creator_ids.len() != amounts.len() {
+            return Err(ContractError::InvalidVaultInput);
+        }
+        if creator_ids.is_empty() || creator_ids.len() > VAULT_MAX_BATCH {
+            return Err(ContractError::BatchSizeExceeded);
+        }
+
+        for (creator, amount) in creator_ids.iter().zip(amounts.iter()) {
+            if amount == 0 {
+                return Err(ContractError::NotPositiveAmount);
+            }
+            read_registered_creator_profile(&env, &creator)?;
+
+            let total_balance: u32 = env
+                .storage()
+                .persistent()
+                .get(&constants::storage::key_balance(&creator, &holder))
+                .unwrap_or(0);
+            let staked = Self::get_staked_balance(env.clone(), creator.clone(), holder.clone());
+            if total_balance.saturating_sub(staked) < amount {
+                return Err(ContractError::InsufficientBalance);
+            }
+
+            let holder_shares = read_vault_shares(&env, &creator, &holder);
+            settle_vault_rewards(&env, &creator, &holder, holder_shares)?;
+
+            let new_holder_shares = holder_shares
+                .checked_add(amount)
+                .ok_or(ContractError::Overflow)?;
+            let new_total_shares = read_vault_total_shares(&env, &creator)
+                .checked_add(amount)
+                .ok_or(ContractError::Overflow)?;
+            let new_staked = staked.checked_add(amount).ok_or(ContractError::Overflow)?;
+            write_vault_position(
+                &env,
+                &creator,
+                &holder,
+                new_holder_shares,
+                new_total_shares,
+                new_staked,
+            );
+
+            env.events().publish(
+                events::vault_deposit_topics(&creator, &holder),
+                events::VaultDepositEvent {
+                    creator_id: creator.clone(),
+                    holder: holder.clone(),
+                    amount,
+                    holder_shares: new_holder_shares,
+                    total_shares: new_total_shares,
+                    ledger: env.ledger().sequence(),
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Withdraws keys from the holder's vault position back to liquid balance.
+    ///
+    /// `creator_ids[i]` and `amounts[i]` describe one withdrawal, so partial and
+    /// full withdrawals are both supported. Rewards earned up to now stay claimable
+    /// via `claim_vault_rewards`. Emits a [`events::VaultWithdrawEvent`] per creator.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::InvalidVaultInput`] if the vectors differ in length.
+    /// - [`ContractError::BatchSizeExceeded`] if empty or more than 10 entries.
+    /// - [`ContractError::NotPositiveAmount`] if an amount is zero.
+    /// - [`ContractError::InsufficientBalance`] if the amount exceeds the holder's vault shares.
+    pub fn vault_withdraw(
+        env: Env,
+        holder: Address,
+        creator_ids: soroban_sdk::Vec<Address>,
+        amounts: soroban_sdk::Vec<u32>,
+    ) -> Result<(), ContractError> {
+        holder.require_auth();
+        assert_not_paused(&env)?;
+
+        if creator_ids.len() != amounts.len() {
+            return Err(ContractError::InvalidVaultInput);
+        }
+        if creator_ids.is_empty() || creator_ids.len() > VAULT_MAX_BATCH {
+            return Err(ContractError::BatchSizeExceeded);
+        }
+
+        for (creator, amount) in creator_ids.iter().zip(amounts.iter()) {
+            if amount == 0 {
+                return Err(ContractError::NotPositiveAmount);
+            }
+
+            let holder_shares = read_vault_shares(&env, &creator, &holder);
+            if holder_shares < amount {
+                return Err(ContractError::InsufficientBalance);
+            }
+            settle_vault_rewards(&env, &creator, &holder, holder_shares)?;
+
+            let new_holder_shares = holder_shares - amount;
+            let new_total_shares = read_vault_total_shares(&env, &creator).saturating_sub(amount);
+            let staked = Self::get_staked_balance(env.clone(), creator.clone(), holder.clone());
+            write_vault_position(
+                &env,
+                &creator,
+                &holder,
+                new_holder_shares,
+                new_total_shares,
+                staked.saturating_sub(amount),
+            );
+
+            env.events().publish(
+                events::vault_withdraw_topics(&creator, &holder),
+                events::VaultWithdrawEvent {
+                    creator_id: creator.clone(),
+                    holder: holder.clone(),
+                    amount,
+                    holder_shares: new_holder_shares,
+                    total_shares: new_total_shares,
+                    ledger: env.ledger().sequence(),
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Distributes `amount` as rewards pro-rata across all vault depositors of `creator`.
+    ///
+    /// Like `distribute_dividend`, this records accounting only; dust from the
+    /// integer division is lost.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::ZeroDistributionAmount`] if `amount` is not positive.
+    /// - [`ContractError::NoKeyHolders`] if the vault holds no keys for `creator`.
+    pub fn distribute_vault_rewards(
+        env: Env,
+        distributor: Address,
+        creator: Address,
+        amount: i128,
+    ) -> Result<(), ContractError> {
+        distributor.require_auth();
+        assert_not_paused(&env)?;
+
+        if amount <= 0 {
+            return Err(ContractError::ZeroDistributionAmount);
+        }
+        let total_shares = read_vault_total_shares(&env, &creator);
+        if total_shares == 0 {
+            return Err(ContractError::NoKeyHolders);
+        }
+
+        let acc_key = constants::storage::vault_reward_acc(&creator);
+        let acc: i128 = env.storage().persistent().get(&acc_key).unwrap_or(0);
+        let per_share = amount
+            .checked_mul(VAULT_REWARD_PRECISION)
+            .ok_or(ContractError::Overflow)?
+            / i128::from(total_shares);
+        let new_acc = acc.checked_add(per_share).ok_or(ContractError::Overflow)?;
+        env.storage().persistent().set(&acc_key, &new_acc);
+        extend_key_ttl_to_full_window(&env, &acc_key);
+        Ok(())
+    }
+
+    /// Read-only view: returns the vault rewards `holder` can currently claim.
+    pub fn get_vault_pending_rewards(env: Env, creator: Address, holder: Address) -> i128 {
+        let acc: i128 = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::vault_reward_acc(&creator))
+            .unwrap_or(0);
+        let checkpoint: i128 = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::vault_reward_checkpoint(
+                &creator, &holder,
+            ))
+            .unwrap_or(0);
+        let pending: i128 = env
+            .storage()
+            .persistent()
+            .get(&constants::storage::vault_reward_pending(&creator, &holder))
+            .unwrap_or(0);
+        let shares = read_vault_shares(&env, &creator, &holder);
+        pending + i128::from(shares) * (acc - checkpoint) / VAULT_REWARD_PRECISION
+    }
+
+    /// Claims all vault rewards accrued by `holder` on `creator`'s keys and
+    /// returns the claimed amount.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NoDividendClaimable`] if nothing is claimable.
+    pub fn claim_vault_rewards(
+        env: Env,
+        creator: Address,
+        holder: Address,
+    ) -> Result<i128, ContractError> {
+        holder.require_auth();
+        assert_not_paused(&env)?;
+
+        let shares = read_vault_shares(&env, &creator, &holder);
+        settle_vault_rewards(&env, &creator, &holder, shares)?;
+
+        let pending_key = constants::storage::vault_reward_pending(&creator, &holder);
+        let claimable: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+        if claimable == 0 {
+            return Err(ContractError::NoDividendClaimable);
+        }
+        env.storage().persistent().set(&pending_key, &0i128);
+        Ok(claimable)
+    }
+
+    /// Read-only view: returns the keys `holder` has deposited in the vault for `creator`.
+    pub fn get_vault_share(env: Env, creator: Address, holder: Address) -> u32 {
+        read_vault_shares(&env, &creator, &holder)
+    }
+
+    /// Read-only view: returns the total keys deposited in the vault for `creator`.
+    pub fn get_vault_total_shares(env: Env, creator: Address) -> u32 {
+        read_vault_total_shares(&env, &creator)
+    }
+
     /// Read-only aggregate view: returns all key-level stats for a registered creator
     /// in a single call, reducing the number of RPC round trips needed by server sync
     /// and admin snapshot endpoints.
@@ -10761,3 +11497,6 @@ mod test_issues_778_779_781_782;
 
 #[cfg(test)]
 mod test_staking_lifecycle;
+
+#[cfg(test)]
+mod test_issues_904_905_906_908;
