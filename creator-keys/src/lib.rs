@@ -3059,9 +3059,9 @@ fn record_price_observation(env: &Env, creator: &Address, price: i128) {
         history.remove(0);
     }
 
-    env.storage()
-        .persistent()
-        .set(&constants::storage::price_history(creator), &history);
+    let history_key = constants::storage::price_history(creator);
+    env.storage().persistent().set(&history_key, &history);
+    extend_key_ttl_to_full_window(env, &history_key);
 }
 
 /// Drops price observations older than the configured retention age.
