@@ -6746,14 +6746,6 @@ impl CreatorKeysContract {
     // Feature: holder_count — get_holder_count() view alias
     // =========================================================================
 
-    /// Read-only view: returns the number of unique holders for a creator.
-    ///
-    /// Alias for [`get_creator_holder_count`](Self::get_creator_holder_count).
-    /// Returns `0` when the creator is not registered.
-    pub fn get_holder_count(env: Env, creator: Address) -> u32 {
-        Self::get_creator_holder_count(env, creator)
-    }
-
     // =========================================================================
     // Feature: snapshot governance auth + pruning
     // =========================================================================
