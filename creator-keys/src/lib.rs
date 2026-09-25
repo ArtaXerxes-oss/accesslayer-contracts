@@ -1210,6 +1210,12 @@ pub enum DataKey {
     Referrer(Address),
     /// Set once a referee's first referred trade has paid its referral reward.
     ReferralSettled(Address),
+    /// Owner-set freeze flag on a `(key_id, wallet)` position.
+    PositionFrozen(Address, Address),
+    /// `true` when a key was registered via `register_key` in auction mode.
+    AuctionPending(Address),
+    /// Age in ledgers after which price snapshots are pruned (`0` = no age limit).
+    PriceRetentionLedgers,
 }
 
 #[derive(Clone, Debug, PartialEq)]
