@@ -423,6 +423,64 @@ pub fn treasury_withdrawal_event_topics(recipient: &Address) -> (Symbol, Address
     (TREASURY_WITHDRAWAL_EVENT_NAME, recipient.clone())
 }
 
+/// Event name for reward pool top-up.
+pub const REWARD_POOL_TOPUP_EVENT_NAME: Symbol = symbol_short!("rwd_top");
+
+/// Stable field order for reward pool top-up event payloads.
+pub const REWARD_POOL_TOPUP_DATA_FIELDS: [&str; 3] = ["sender", "amount", "new_pool_balance"];
+
+/// Stable reward pool top-up event payload for downstream indexers.
+///
+/// Event shape:
+/// - topics: `(REWARD_POOL_TOPUP_EVENT_NAME, sender)`
+/// - data: `RewardPoolTopUpEvent`
+///
+/// Emitted when the authorised fee router calls `topup_reward_pool`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct RewardPoolTopUpEvent {
+    /// Address of the fee router that sent the top-up.
+    pub sender: Address,
+    /// Amount added to the pool in this call (stroops).
+    pub amount: i128,
+    /// New total reward pool balance after the top-up (stroops).
+    pub new_pool_balance: i128,
+}
+
+/// Shared reward pool top-up event topics tuple.
+pub fn reward_pool_topup_topics(sender: &Address) -> (Symbol, Address) {
+    (REWARD_POOL_TOPUP_EVENT_NAME, sender.clone())
+}
+
+/// Event name for bid-ask spread update.
+pub const SPREAD_UPDATED_EVENT_NAME: Symbol = symbol_short!("sprd_upd");
+
+/// Stable field order for spread updated event payloads.
+pub const SPREAD_UPDATED_DATA_FIELDS: [&str; 3] = ["creator", "old_spread_bps", "new_spread_bps"];
+
+/// Stable spread updated event payload for downstream indexers.
+///
+/// Event shape:
+/// - topics: `(SPREAD_UPDATED_EVENT_NAME, creator)`
+/// - data: `SpreadUpdatedEvent`
+///
+/// Emitted when the admin updates the bid-ask spread for a creator.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct SpreadUpdatedEvent {
+    /// Creator whose spread was changed.
+    pub creator: Address,
+    /// Previous spread in basis points.
+    pub old_spread_bps: u32,
+    /// New spread in basis points.
+    pub new_spread_bps: u32,
+}
+
+/// Shared spread updated event topics tuple.
+pub fn spread_updated_topics(creator: &Address) -> (Symbol, Address) {
+    (SPREAD_UPDATED_EVENT_NAME, creator.clone())
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
