@@ -70,7 +70,7 @@ fn test_without_retention_snapshots_are_kept() {
 
     set_ledger_sequence(&env, 100);
     client.buy_key(&creator, &buyer, &KEY_PRICE, &None);
-    set_ledger_sequence(&env, 1_000_000);
+    set_ledger_sequence(&env, 1_000);
     client.buy_key(&creator, &buyer, &(KEY_PRICE * 10), &None);
     assert_eq!(client.get_price_snapshot_count(&creator), 2);
 }
