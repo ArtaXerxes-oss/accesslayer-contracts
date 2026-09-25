@@ -112,6 +112,8 @@ pub enum ContractError {
     SnapshotNotFound = 71,
     /// The sender's keys are frozen and cannot be transferred.
     FrozenPosition = 72,
+    /// The requested buy cooldown exceeds `MAX_BUY_COOLDOWN_LEDGERS` at registration.
+    InvalidCooldown = 73,
 }
 
 /// Errors raised by the staking lifecycle entrypoints
