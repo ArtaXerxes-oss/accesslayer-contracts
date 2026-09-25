@@ -5449,7 +5449,9 @@ impl CreatorKeysContract {
         let cycle_pool_key = RevenueKey::CyclePool(creator.clone(), cycle);
         env.storage().persistent().set(&cycle_pool_key, &pool);
         extend_key_ttl_to_full_window(&env, &cycle_pool_key);
-        env.storage().persistent().set(&pool_key, &(pool - allocated));
+        env.storage()
+            .persistent()
+            .set(&pool_key, &(pool - allocated));
         extend_key_ttl_to_full_window(&env, &pool_key);
         env.storage().persistent().set(&count_key, &cycle);
         extend_key_ttl_to_full_window(&env, &count_key);

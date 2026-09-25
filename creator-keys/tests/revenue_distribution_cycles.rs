@@ -13,7 +13,15 @@ use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 const KEY_PRICE: i128 = 100;
 
 /// Admin, creator, and two stakers holding 1 and 2 staked keys respectively.
-fn setup(env: &Env) -> (CreatorKeysContractClient<'_>, Address, Address, Address, Address) {
+fn setup(
+    env: &Env,
+) -> (
+    CreatorKeysContractClient<'_>,
+    Address,
+    Address,
+    Address,
+    Address,
+) {
     let (client, _) = register_creator_keys(env);
     let admin = set_key_price_for_tests(env, &client, KEY_PRICE);
     client.set_protocol_admin(&admin, &admin);
