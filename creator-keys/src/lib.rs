@@ -7,8 +7,8 @@ use soroban_sdk::{
 };
 
 pub mod events;
-pub mod test_new_features;
 pub mod test_feature_impl;
+pub mod test_new_features;
 
 // Contract error variants stability and ordering:
 //
@@ -3464,11 +3464,7 @@ fn prune_old_snapshots(env: &Env, creator: &Address, current_snapshot_id: u32) {
     let cutoff = current_ledger.saturating_sub(retention);
 
     let oldest_key = constants::storage::oldest_snapshot_id(creator);
-    let oldest_id: u32 = env
-        .storage()
-        .persistent()
-        .get(&oldest_key)
-        .unwrap_or(0);
+    let oldest_id: u32 = env.storage().persistent().get(&oldest_key).unwrap_or(0);
 
     let mut cursor = oldest_id;
     while cursor < current_snapshot_id {
@@ -3493,10 +3489,14 @@ fn prune_old_snapshots(env: &Env, creator: &Address, current_snapshot_id: u32) {
             for holder in holders.iter() {
                 env.storage()
                     .persistent()
-                    .remove(&constants::storage::snapshot_balance(creator, cursor, &holder));
-                env.storage().persistent().remove(
-                    &constants::storage::snapshot_staked_balance(creator, cursor, &holder),
-                );
+                    .remove(&constants::storage::snapshot_balance(
+                        creator, cursor, &holder,
+                    ));
+                env.storage()
+                    .persistent()
+                    .remove(&constants::storage::snapshot_staked_balance(
+                        creator, cursor, &holder,
+                    ));
             }
         }
         env.storage().persistent().remove(&holders_key);
@@ -6617,10 +6617,8 @@ impl CreatorKeysContract {
             .set(&constants::storage::GOVERNANCE_ADDRESS, &governance);
         extend_key_ttl_to_full_window(&env, &constants::storage::GOVERNANCE_ADDRESS);
 
-        env.events().publish(
-            events::governance_address_set_topics(&admin),
-            governance,
-        );
+        env.events()
+            .publish(events::governance_address_set_topics(&admin), governance);
 
         Ok(())
     }
@@ -6845,7 +6843,9 @@ impl CreatorKeysContract {
                 }
 
                 let creator_profile_key = constants::storage::creator(&creator);
-                env.storage().persistent().set(&creator_profile_key, &profile);
+                env.storage()
+                    .persistent()
+                    .set(&creator_profile_key, &profile);
 
                 // Emit HolderCountChanged on first buy.
                 if current_balance == 0 {

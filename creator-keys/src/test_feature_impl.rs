@@ -357,12 +357,8 @@ fn take_snapshot_governance_rejects_non_governance_caller_after_governance_set()
     client.set_governance_address(&admin, &governance);
 
     // Admin is NOT governance — should be rejected.
-    let result = client.try_take_snapshot_governance(
-        &admin,
-        &creator,
-        &1u32,
-        &soroban_sdk::Vec::new(&env),
-    );
+    let result =
+        client.try_take_snapshot_governance(&admin, &creator, &1u32, &soroban_sdk::Vec::new(&env));
     assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
 }
 
@@ -374,12 +370,7 @@ fn take_snapshot_governance_rejects_duplicate_snapshot_id() {
     register(&env, &client, &creator);
     client.set_governance_address(&admin, &governance);
 
-    client.take_snapshot_governance(
-        &governance,
-        &creator,
-        &1u32,
-        &soroban_sdk::Vec::new(&env),
-    );
+    client.take_snapshot_governance(&governance, &creator, &1u32, &soroban_sdk::Vec::new(&env));
 
     let result = client.try_take_snapshot_governance(
         &governance,
@@ -402,23 +393,13 @@ fn snapshot_pruned_after_retention_window() {
     client.set_snapshot_retention(&admin, &5u32);
 
     // Take snapshot 1 at ledger 1.
-    client.take_snapshot_governance(
-        &governance,
-        &creator,
-        &1u32,
-        &soroban_sdk::Vec::new(&env),
-    );
+    client.take_snapshot_governance(&governance, &creator, &1u32, &soroban_sdk::Vec::new(&env));
 
     // Advance by 10 ledgers (past the 5-ledger retention window).
     env.ledger().with_mut(|l| l.sequence_number += 10);
 
     // Take snapshot 2; this should trigger pruning of snapshot 1.
-    client.take_snapshot_governance(
-        &governance,
-        &creator,
-        &2u32,
-        &soroban_sdk::Vec::new(&env),
-    );
+    client.take_snapshot_governance(&governance, &creator, &2u32, &soroban_sdk::Vec::new(&env));
 
     // Snapshot 1 should have been pruned (meta returns None).
     let pruned_meta = client.get_snapshot_meta(&creator, &1u32);
@@ -442,22 +423,12 @@ fn snapshot_not_pruned_within_retention_window() {
     // Set retention window of 100 ledgers.
     client.set_snapshot_retention(&admin, &100u32);
 
-    client.take_snapshot_governance(
-        &governance,
-        &creator,
-        &1u32,
-        &soroban_sdk::Vec::new(&env),
-    );
+    client.take_snapshot_governance(&governance, &creator, &1u32, &soroban_sdk::Vec::new(&env));
 
     // Advance only 5 ledgers — still well inside the window.
     env.ledger().with_mut(|l| l.sequence_number += 5);
 
-    client.take_snapshot_governance(
-        &governance,
-        &creator,
-        &2u32,
-        &soroban_sdk::Vec::new(&env),
-    );
+    client.take_snapshot_governance(&governance, &creator, &2u32, &soroban_sdk::Vec::new(&env));
 
     // Snapshot 1 should NOT be pruned.
     assert!(
@@ -563,8 +534,7 @@ fn batch_buy_v2_empty_orders_rejected() {
     let (env, client, _admin) = setup();
     let buyer = Address::generate(&env);
 
-    let result =
-        client.try_batch_buy_v2(&buyer, &soroban_sdk::Vec::new(&env));
+    let result = client.try_batch_buy_v2(&buyer, &soroban_sdk::Vec::new(&env));
     assert_eq!(result, Err(Ok(ContractError::BatchClaimExceedsLimit)));
 }
 
@@ -628,7 +598,7 @@ fn batch_buy_v2_multi_order_slippage_independent_per_order() {
     // creator_a has generous max_price (passes), creator_b has tight max_price (fails).
     let mut orders = soroban_sdk::Vec::new(&env);
     orders.push_back((creator_a.clone(), 1u32, Some(500i128))); // passes (price=100)
-    orders.push_back((creator_b.clone(), 1u32, Some(50i128)));  // fails (price=100 > 50)
+    orders.push_back((creator_b.clone(), 1u32, Some(50i128))); // fails (price=100 > 50)
 
     let result = client.try_batch_buy_v2(&buyer, &orders);
     assert_eq!(result, Err(Ok(ContractError::SlippageExceeded)));
