@@ -1863,7 +1863,7 @@ fn test_buy_event_topic_and_data_order_is_stable() {
     let all_events = env.events().all();
     // buy_key may emit a HolderCountChangedEvent (new holder) before the buy event;
     // the buy event is always last.
-    assert!(all_events.len() >= 1, "expected at least one buy event");
+    assert!(!all_events.is_empty(), "expected at least one buy event");
 
     let (_contract_id, topics, data): (
         Address,
@@ -2896,7 +2896,7 @@ fn test_buy_and_sell_events_contain_matching_creator_id() {
     client.buy_key(&creator, &buyer, &100, &None);
 
     let all_events = env.events().all();
-    assert!(all_events.len() >= 1, "expected at least one buy event");
+    assert!(!all_events.is_empty(), "expected at least one buy event");
 
     let (_contract_id, _topics, data): (
         Address,
@@ -2917,7 +2917,7 @@ fn test_buy_and_sell_events_contain_matching_creator_id() {
     client.sell_key(&creator, &buyer, &None);
 
     let all_events = env.events().all();
-    assert!(all_events.len() >= 1, "expected at least one sell event");
+    assert!(!all_events.is_empty(), "expected at least one sell event");
 
     let (_contract_id, _topics, data): (
         Address,
